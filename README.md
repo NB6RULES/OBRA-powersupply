@@ -16,7 +16,11 @@ A cleaner control app for the **Multicomp Pro MP711127 / MP711128 / MP711129 / M
 - **Output button**, plus **Esc as an emergency off**. Esc also stops a running waveform.
 - **8 presets**. Click one to load it. Right-click to save the current settings into it.
 - **Live chart** with 30 s / 2 min / 10 min / all views and drag-to-zoom. It shows min/avg/max, energy in Wh and charge in mAh, and you can export the data to CSV.
-- **Record**: logs every reading to `Documents\PSU Studio\logs\*.csv`.
+- **Logging and export**:
+  - **Record** writes every reading straight to `Documents\PSU Studio\logs\log_<date>.csv` as it arrives, so long runs are safe even if the app closes.
+  - **Export CSV** on the Live tab saves everything collected since you connected (or pressed Clear).
+  - Both CSVs have columns: timestamp, time_s, voltage_V, current_A, power_W, set_V, set_A.
+  - **Save JPEG** on the Live and Waveform tabs saves the chart as a high-res image, with a title, stats, legend and date.
 - **Waveform editor**:
   - Edit steps in a spreadsheet-style table (V, A, seconds, on/off), with a stepped preview and a play-head while it runs.
   - **Paste a lookup table**. Ctrl+V anywhere on the Waveform tab, or use the button. It accepts cells copied from Excel, CSV, tab-separated or space-separated text, and decimal commas.

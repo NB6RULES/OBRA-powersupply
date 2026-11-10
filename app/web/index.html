@@ -19,7 +19,7 @@
     <label class="tick" title="Connect automatically when the supply is plugged in"><input type="checkbox" id="autoConn" checked> Auto</label>
   </div>
   <div class="right">
-    <button class="btn ghost small" id="recBtn" title="Log every reading to CSV"><span class="dot"></span>Record</button>
+    <button class="btn ghost small" id="recBtn" title="Log every reading straight to a CSV file on disk (Documents\\PSU Studio\\logs). Survives crashes and long runs."><span class="dot"></span>Record</button>
     <span class="status" id="statusTxt">Not connected</span>
   </div>
 </header>
@@ -74,7 +74,8 @@
         <label class="mini">Poll <select id="pollSel"><option>2</option><option>5</option><option selected>8</option><option>10</option><option>15</option></select> Hz</label>
         <button class="btn ghost small" id="pauseBtn">Pause</button>
         <button class="btn ghost small" id="clearLive">Clear</button>
-        <button class="btn ghost small" id="exportLive">Export CSV</button>
+        <button class="btn ghost small" id="exportLive" title="Every reading since connecting (or since Clear)">Export CSV</button>
+        <button class="btn ghost small" id="jpegLive" title="Save the chart as it looks now">Save JPEG</button>
       </div>
       <div class="chart" id="liveChart"></div>
       <div class="stats" id="liveStats"></div>
@@ -93,6 +94,7 @@
         <button class="btn ghost small" id="clearWave">Clear</button>
         <div class="grow"></div>
         <button class="btn ghost small" id="exportWave">Export CSV</button>
+        <button class="btn ghost small" id="jpegWave">Save JPEG</button>
       </div>
       <div class="wave-body">
         <div class="wave-table-wrap">

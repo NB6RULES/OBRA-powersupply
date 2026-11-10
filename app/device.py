@@ -377,15 +377,18 @@ class Device:
 
 
 class Recorder:
-    def __init__(self, path):
+    def __init__(self, path, t0=0.0):
         self.path = path
+        self.t0 = t0
         self.f = open(path, "w", encoding="utf-8", newline="")
-        self.f.write("time_s,voltage_V,current_A,power_W,set_V,set_A\n")
+        self.f.write("timestamp,time_s,voltage_V,current_A,power_W,set_V,set_A\n")
         self.rows = 0
 
     def write(self, row):
         try:
-            self.f.write(",".join(f"{x:.4f}" for x in row) + "\n")
+            ts = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(self.t0 + row[0]))
+            ms = int(((self.t0 + row[0]) % 1) * 1000)
+            self.f.write(f"{ts}.{ms:03d}," + ",".join(f"{x:.4f}" for x in row) + "\n")
             self.rows += 1
             if self.rows % 20 == 0:
                 self.f.flush()

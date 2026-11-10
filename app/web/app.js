@@ -29,7 +29,7 @@ function toast(msg, kind = "", ms = 3200, action) {
 const S = {
   connected: false, limits: { vmax: 30, imax: 10, pmax: 200, ovp: 31, ocp: 10.1 },
   state: {}, seq: 0, step: 0.01, paused: false,
-  live: { t: [], v: [], i: [], p: [] }, win: 30,
+  live: { t: [], v: [], i: [], p: [], vs: [], is: [] }, t0: 0, win: 30,
   steps: [], sel: new Set(),
   presets: Array(8).fill(null),
   settings: {}, dirty: {},
@@ -54,27 +54,31 @@ function saveSettings() {
 // ---------------------------------------------------------------- charts
 const css = getComputedStyle(document.documentElement);
 const C = { v: css.getPropertyValue("--v").trim(), i: css.getPropertyValue("--i").trim(), p: css.getPropertyValue("--p").trim() };
-const axis = (o = {}) => Object.assign({
-  stroke: "#6b7583", grid: { stroke: "#1b2129", width: 1 }, ticks: { stroke: "#1b2129" },
-  font: "11px " + css.getPropertyValue("--mono"),
+// k scales fonts/line widths; k > 1 is used for the high-res JPEG export
+const axis = (o = {}, k = 1) => Object.assign({
+  stroke: "#6b7583", grid: { stroke: "#1b2129", width: 1 }, ticks: { stroke: "#1b2129", size: 6 * k },
+  font: `${Math.round(11 * k)}px ` + css.getPropertyValue("--mono"), size: 50 * k, gap: 5 * k,
 }, o);
+const vAxes = k => [axis({ space: 60 * k, values: (u, v) => v.map(x => fmtTime(x)) }, k), axis({ space: 32 * k, scale: "V", values: (u, v) => v.map(x => x + " V") }, k),
+  axis({ space: 32 * k, scale: "A", side: 1, size: 62 * k, grid: { show: false }, values: (u, v) => v.map(x => x + " A") }, k)];
 
 function sized(el) { const r = el.getBoundingClientRect(); return { width: Math.max(200, r.width - 12), height: Math.max(140, r.height - 40) }; }
 
 let liveChart, waveChart, genChart;
-function makeLive() {
-  const el = $("#liveChart");
-  liveChart = new uPlot({
-    ...sized(el),
+function liveOpts(k = 1) {
+  return {
     cursor: { drag: { x: true, y: false } },
     scales: { x: { time: false }, V: { range: (u, a, b) => [0, Math.max(1, b * 1.15)] }, A: { range: (u, a, b) => [0, Math.max(0.1, b * 1.15)] }, W: { range: (u, a, b) => [0, Math.max(1, b * 1.15)] } },
-    axes: [axis({ values: (u, v) => v.map(x => fmtTime(x)) }), axis({ scale: "V", values: (u, v) => v.map(x => x + " V") }),
-           axis({ scale: "A", side: 1, size: 62, grid: { show: false }, values: (u, v) => v.map(x => x + " A") })],
+    axes: vAxes(k),
     series: [{ label: "t", value: (u, v) => v == null ? "—" : fmtTime(v) },
-      { label: "Voltage", scale: "V", stroke: C.v, width: 1.6, value: (u, v) => fmt(v, 3) + " V" },
-      { label: "Current", scale: "A", stroke: C.i, width: 1.6, value: (u, v) => fmt(v, 3) + " A" },
-      { label: "Power", scale: "W", stroke: C.p, width: 1.2, dash: [4, 3], value: (u, v) => fmt(v, 2) + " W" }],
-  }, [[], [], [], []], el);
+      { label: "Voltage", scale: "V", stroke: C.v, width: 1.6 * k, points: { show: k === 1 }, value: (u, v) => fmt(v, 3) + " V" },
+      { label: "Current", scale: "A", stroke: C.i, width: 1.6 * k, points: { show: k === 1 }, value: (u, v) => fmt(v, 3) + " A" },
+      { label: "Power", scale: "W", stroke: C.p, width: 1.2 * k, dash: [4 * k, 3 * k], points: { show: k === 1 }, value: (u, v) => fmt(v, 2) + " W" }],
+  };
+}
+function makeLive() {
+  const el = $("#liveChart");
+  liveChart = new uPlot({ ...sized(el), ...liveOpts() }, [[], [], [], []], el);
 }
 function fmtTime(s) {
   if (s == null) return "";
@@ -91,19 +95,18 @@ function stepSeries(steps) {
   if (steps.length) { t.push(acc); v.push(v[v.length - 1]); i.push(i[i.length - 1]); }
   return [t, v, i];
 }
-function makeStepChart(el, extraOpts = {}) {
-  return new uPlot({
-    ...sized(el),
+function stepOpts(k = 1) {
+  return {
     cursor: { drag: { x: true, y: false } },
     scales: { x: { time: false }, V: { range: (u, a, b) => [Math.min(0, a), Math.max(1, b * 1.1)] }, A: { range: (u, a, b) => [0, Math.max(0.1, b * 1.15)] } },
-    axes: [axis({ values: (u, v) => v.map(x => fmtTime(x)) }), axis({ scale: "V", values: (u, v) => v.map(x => x + " V") }),
-           axis({ scale: "A", side: 1, size: 62, grid: { show: false }, values: (u, v) => v.map(x => x + " A") })],
+    axes: vAxes(k),
     series: [{ label: "t", value: (u, v) => v == null ? "—" : fmtTime(v) },
-      { label: "Voltage", scale: "V", stroke: C.v, width: 1.8, fill: "rgba(255,176,32,.07)", paths: uPlot.paths.stepped({ align: 1 }), points: { show: false }, value: (u, v) => fmt(v, 3) + " V" },
-      { label: "Current", scale: "A", stroke: C.i, width: 1.4, paths: uPlot.paths.stepped({ align: 1 }), points: { show: false }, value: (u, v) => fmt(v, 3) + " A" }],
-    plugins: [cursorLinePlugin()],
-    ...extraOpts,
-  }, [[], [], []], el);
+      { label: "Voltage", scale: "V", stroke: C.v, width: 1.8 * k, fill: "rgba(255,176,32,.07)", paths: uPlot.paths.stepped({ align: 1 }), points: { show: false }, value: (u, v) => fmt(v, 3) + " V" },
+      { label: "Current", scale: "A", stroke: C.i, width: 1.4 * k, paths: uPlot.paths.stepped({ align: 1 }), points: { show: false }, value: (u, v) => fmt(v, 3) + " A" }],
+  };
+}
+function makeStepChart(el, extraOpts = {}) {
+  return new uPlot({ ...sized(el), ...stepOpts(), plugins: [cursorLinePlugin()], ...extraOpts }, [[], [], []], el);
 }
 // draws the "now playing" line on the waveform preview
 function cursorLinePlugin() {
@@ -123,10 +126,10 @@ function pushSamples(rows) {
   if (S.paused || !rows.length) return;
   const L = S.live;
   for (const r of rows) {
-    if (L.t.length && r[0] < L.t[L.t.length - 1]) { L.t = []; L.v = []; L.i = []; L.p = []; }  // reconnect: time restarted
-    L.t.push(r[0]); L.v.push(r[1]); L.i.push(r[2]); L.p.push(r[3]);
+    if (L.t.length && r[0] < L.t[L.t.length - 1]) clearLive();  // reconnect: time restarted
+    L.t.push(r[0]); L.v.push(r[1]); L.i.push(r[2]); L.p.push(r[3]); L.vs.push(r[4]); L.is.push(r[5]);
   }
-  if (L.t.length > MAX_LIVE) { const n = L.t.length - MAX_LIVE; L.t.splice(0, n); L.v.splice(0, n); L.i.splice(0, n); L.p.splice(0, n); }
+  if (L.t.length > MAX_LIVE) { const n = L.t.length - MAX_LIVE; for (const k in L) L[k].splice(0, n); }
   drawLive();
 }
 let liveRaf;
@@ -143,6 +146,7 @@ function drawLive() {
     stats(sl(L.v), sl(L.i), sl(L.p), sl(L.t));
   });
 }
+function clearLive() { const L = S.live; for (const k in L) L[k] = []; }
 function lowerBound(a, x) { let lo = 0, hi = a.length; while (lo < hi) { const m = (lo + hi) >> 1; if (a[m] < x) lo = m + 1; else hi = m; } return lo; }
 function stats(v, i, p, t) {
   if (!v.length) { $("#liveStats").innerHTML = ""; return; }
@@ -166,7 +170,7 @@ async function poll() {
     const wasConnected = S.connected;
     S.connected = r.connected;
     if (r.connected) {
-      S.limits = r.limits; S.state = r.state;
+      S.limits = r.limits; S.state = r.state; S.t0 = r.t0;
       pushSamples(r.samples);
       renderSeq(r.sequencer);
       renderReadouts(r);
@@ -724,6 +728,61 @@ async function saveText(name, text) {
   a.href = URL.createObjectURL(new Blob([text], { type: "text/csv" })); a.download = name; a.click();
   setTimeout(() => URL.revokeObjectURL(a.href), 2000);
 }
+// ---------------------------------------------------------------- export helpers
+const pad2 = n => String(n).padStart(2, "0");
+function fileStamp(d = new Date()) { return `${d.getFullYear()}${pad2(d.getMonth() + 1)}${pad2(d.getDate())}_${pad2(d.getHours())}${pad2(d.getMinutes())}${pad2(d.getSeconds())}`; }
+function localStamp(sec) {
+  const d = new Date(sec * 1000);
+  return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())} ${pad2(d.getHours())}:${pad2(d.getMinutes())}:${pad2(d.getSeconds())}.${String(d.getMilliseconds()).padStart(3, "0")}`;
+}
+// Render a uPlot chart to a JPEG: header, chart, legend, footer, on a solid background.
+// Re-draw the chart off-screen at export size with bigger fonts, then add a header and legend.
+async function chartJpeg(u, kind, title, sub) {
+  const dpr = window.devicePixelRatio || 1;
+  const k = Math.max(1, 2 / dpr);                 // aim for ~2x pixels whatever the screen
+  const W = 1400, H = 640;                        // CSS px; final image is W*k*dpr wide
+  const host = document.createElement("div");
+  host.style.cssText = `position:fixed;left:-20000px;top:0;width:${W * k}px`;
+  document.body.append(host);
+  const opts = kind === "live" ? liveOpts(k) : stepOpts(k);
+  opts.legend = { show: false };
+  opts.scales.x = { time: false, range: () => [u.scales.x.min, u.scales.x.max] };  // keep the current zoom/window
+  const big = new uPlot({ width: W * k, height: H * k, ...opts }, u.data, host);
+  await new Promise(r => requestAnimationFrame(() => r()));
+  const src = big.ctx.canvas, scale = src.width / W;
+  const pad = 28 * scale, head = 70 * scale, foot = 46 * scale;
+  const c = document.createElement("canvas");
+  c.width = src.width + pad * 2; c.height = src.height + head + foot;
+  const g = c.getContext("2d");
+  const font = (px, w = 400) => `${w} ${px * scale}px "Segoe UI", system-ui, sans-serif`;
+  g.fillStyle = "#0e1216"; g.fillRect(0, 0, c.width, c.height);
+  g.textBaseline = "top";
+  g.fillStyle = "#e6e9ee"; g.font = font(20, 600); g.fillText("PSU Studio  ·  " + title, pad, 16 * scale);
+  g.fillStyle = "#8b95a3"; g.font = font(13); g.fillText(sub || "", pad, 44 * scale, c.width - pad * 2);
+  g.textAlign = "right"; g.fillText(new Date().toLocaleString(), c.width - pad, 20 * scale); g.textAlign = "left";
+  g.drawImage(src, pad, head);
+  let x = pad; const y = head + src.height + 16 * scale;
+  g.font = font(13);
+  big.series.slice(1).forEach((sr, n) => {
+    if (!big.data[n + 1]?.length) return;
+    g.strokeStyle = ({ Voltage: C.v, Current: C.i, Power: C.p })[sr.label] || "#ccc"; g.lineWidth = 3 * scale;
+    g.setLineDash(sr.label === "Power" ? [6 * scale, 4 * scale] : []);
+    g.beginPath(); g.moveTo(x, y + 8 * scale); g.lineTo(x + 24 * scale, y + 8 * scale); g.stroke(); g.setLineDash([]);
+    g.fillStyle = "#c9ced6"; g.fillText(sr.label, x + 32 * scale, y);
+    x += 32 * scale + g.measureText(sr.label).width + 28 * scale;
+  });
+  big.destroy(); host.remove();
+  return c.toDataURL("image/jpeg", 0.92);
+}
+async function saveJpeg(u, kind, title, sub, name) {
+  const url = await chartJpeg(u, kind, title, sub);
+  if (isDesktop()) {
+    const r = await api.save_binary(name, url.split(",")[1]);
+    if (r.ok) toast("Saved " + r.path, "", 4000, { label: "Open folder", fn: () => api.open_folder(r.path) });
+    return;
+  }
+  const a = document.createElement("a"); a.href = url; a.download = name; a.click();
+}
 function renderRec(rec) {
   const b = $("#recBtn");
   b.classList.toggle("on", rec.on);
@@ -736,11 +795,22 @@ function bindMisc() {
   }));
   $("#showP").addEventListener("change", drawLive);
   $("#pauseBtn").addEventListener("click", e => { S.paused = !S.paused; e.target.textContent = S.paused ? "Resume" : "Pause"; });
-  $("#clearLive").addEventListener("click", () => { S.live = { t: [], v: [], i: [], p: [] }; drawLive(); });
+  $("#clearLive").addEventListener("click", () => { clearLive(); drawLive(); });
   $("#exportLive").addEventListener("click", () => {
-    const L = S.live; let csv = "time_s,voltage_V,current_A,power_W\n";
-    for (let k = 0; k < L.t.length; k++) csv += `${L.t[k].toFixed(3)},${L.v[k]},${L.i[k]},${L.p[k]}\n`;
-    saveText("live_" + new Date().toISOString().slice(0, 19).replace(/[:T]/g, "-") + ".csv", csv);
+    const L = S.live;
+    if (!L.t.length) { toast("No readings yet - connect and let it log for a bit", "err"); return; }
+    const out = ["timestamp,time_s,voltage_V,current_A,power_W,set_V,set_A"];
+    for (let k = 0; k < L.t.length; k++) out.push(`${localStamp(S.t0 + L.t[k])},${L.t[k].toFixed(3)},${L.v[k]},${L.i[k]},${(+L.p[k]).toFixed(4)},${L.vs[k]},${L.is[k]}`);
+    saveText(`psu_log_${fileStamp()}.csv`, out.join("\n") + "\n");
+  });
+  $("#jpegLive").addEventListener("click", () => {
+    if (!S.live.t.length) { toast("Nothing on the chart yet", "err"); return; }
+    const sub = [$("#statusTxt").textContent, ...$$("#liveStats span").map(e => e.textContent)].filter(Boolean).join("   |   ");
+    saveJpeg(liveChart, "live", "Live readings", sub, `psu_chart_${fileStamp()}.jpg`);
+  });
+  $("#jpegWave").addEventListener("click", () => {
+    if (!S.steps.length) { toast("Waveform is empty", "err"); return; }
+    saveJpeg(waveChart, "wave", "Waveform", $$("#waveSum span").map(e => e.textContent.replace(/\s+/g, " ").trim()).join("   |   "), `psu_waveform_${fileStamp()}.jpg`);
   });
   $("#pollSel").addEventListener("change", e => api.set_poll_rate(+e.target.value));
   $("#connectBtn").addEventListener("click", connectToggle);

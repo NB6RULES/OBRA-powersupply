@@ -118,7 +118,7 @@ class Api:
         data, new_seq = d.samples_since(int(seq or 0))
         rec = d.recorder
         return dict(
-            connected=d.link.is_open, port=d.link.port, idn=d.idn,
+            connected=d.link.is_open, port=d.link.port, idn=d.idn, t0=d.t0,
             limits=d.limits, state=d.state, error=d.error,
             seq=new_seq, samples=data, sequencer=self._seq.status,
             recording=dict(on=bool(rec), path=rec.path if rec else "", rows=rec.rows if rec else 0),
@@ -182,20 +182,34 @@ class Api:
             except OSError:
                 pass
 
-    def save_text(self, default_name, text):
+    def _save_path(self, default_name):
         os.makedirs(DOCS, exist_ok=True)
-        path = None
-        if self._window is not None:
-            import webview
-            res = self._window.create_file_dialog(
-                webview.SAVE_DIALOG, directory=DOCS, save_filename=default_name)
-            if not res:
-                return dict(ok=False, msg="cancelled")
-            path = res if isinstance(res, str) else res[0]
-        else:
-            path = os.path.join(DOCS, default_name)
+        if self._window is None:
+            return os.path.join(DOCS, default_name)
+        import webview
+        ext = os.path.splitext(default_name)[1].lower()
+        types = {".csv": ("CSV files (*.csv)",), ".jpg": ("JPEG images (*.jpg;*.jpeg)",)}.get(ext, ())
+        res = self._window.create_file_dialog(
+            webview.SAVE_DIALOG, directory=DOCS, save_filename=default_name, file_types=types)
+        if not res:
+            return None
+        return res if isinstance(res, str) else res[0]
+
+    def save_text(self, default_name, text):
+        path = self._save_path(default_name)
+        if not path:
+            return dict(ok=False, msg="cancelled")
         with open(path, "w", encoding="utf-8", newline="") as f:
             f.write(text)
+        return dict(ok=True, path=path)
+
+    def save_binary(self, default_name, b64):
+        """Used for chart JPEGs: the page sends a base64 data payload."""
+        path = self._save_path(default_name)
+        if not path:
+            return dict(ok=False, msg="cancelled")
+        with open(path, "wb") as f:
+            f.write(base64.b64decode(b64))
         return dict(ok=True, path=path)
 
     def start_record(self):
@@ -203,7 +217,7 @@ class Api:
             return dict(ok=True, path=self._dev.recorder.path)
         os.makedirs(os.path.join(DOCS, "logs"), exist_ok=True)
         path = os.path.join(DOCS, "logs", time.strftime("log_%Y%m%d_%H%M%S.csv"))
-        self._dev.recorder = dev_mod.Recorder(path)
+        self._dev.recorder = dev_mod.Recorder(path, self._dev.t0)
         return dict(ok=True, path=path)
 
     def stop_record(self):

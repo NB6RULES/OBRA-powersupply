@@ -5,3 +5,4 @@ dist/
 *.spec
 drivers/*.exe
 drivers/*.EXE
+app/build_info.json

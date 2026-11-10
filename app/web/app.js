@@ -837,12 +837,60 @@ function bindMisc() {
   });
 }
 
+// ---------------------------------------------------------------- updates
+const RELEASES = "https://github.com/NB6RULES/OBRA-powersupply/releases/latest";
+let updState = null;
+async function checkUpdate(force = false) {
+  const st = await api.check_update(force);
+  updState = st;
+  $("#verTag").textContent = st.dev ? "dev" : `build ${st.current}`;
+  $("#verTag").title = st.dev ? "Running from source" : `Build ${st.current}${st.sha ? " · " + st.sha : ""}`;
+  const pill = $("#updPill");
+  pill.hidden = !st.available;
+  if (st.available) {
+    $("#updTxt").textContent = `Update available · build ${st.latest.build}`;
+    if (!checkUpdate.told) { checkUpdate.told = true; toast(`PSU Studio build ${st.latest.build} is out`, "", 6000, { label: "See what's new", fn: openUpd }); }
+  }
+  return st;
+}
+function openUpd() {
+  const st = updState; if (!st || !st.latest) return;
+  const when = st.latest.published ? new Date(st.latest.published).toLocaleString() : "";
+  $("#updTitle").textContent = `Update to build ${st.latest.build}`;
+  $("#updBody").innerHTML = `You're on <b>build ${st.current}</b>. Build <b>${st.latest.build}</b> was released ${esc(when)}.<br>` +
+    (st.can_install ? "PSU Studio will download it, close, swap the file and reopen by itself. The output is switched off first."
+                    : "Download the new <b>PSU-Studio.exe</b> and replace your old one.");
+  $("#updGo").textContent = st.can_install ? "Update & restart" : "Download";
+  $("#updMsg").textContent = ""; $("#updProg").hidden = true;
+  $("#updDlg").showModal();
+}
+function bindUpdates() {
+  $("#updPill").addEventListener("click", openUpd);
+  $("#verTag").addEventListener("click", async () => { const st = await checkUpdate(true); if (!st.available) toast(st.error || (st.dev ? "Running from source - no update check" : "You're on the latest build")); });
+  $("#updNotes").addEventListener("click", () => api.open_url(updState?.latest?.url || RELEASES));
+  $("#updGo").addEventListener("click", async () => {
+    const st = updState;
+    if (!st.can_install) { api.open_url(st.latest.download || RELEASES); $("#updDlg").close(); return; }
+    if (S.state.out) { S.userOff = true; await api.seq_stop(); await api.set_output(false); }
+    const r = await api.install_update();
+    if (!r.ok) { $("#updMsg").className = "map-msg err"; $("#updMsg").textContent = r.msg; return; }
+    $("#updGo").disabled = true; $("#updProg").hidden = false;
+    const iv = setInterval(async () => {
+      const u = await api.update_status();
+      $("#updBar").style.width = Math.round((u.progress || 0) * 100) + "%";
+      $("#updMsg").className = "map-msg " + (u.error ? "err" : "");
+      $("#updMsg").textContent = u.error || (u.progress >= 1 ? "Restarting…" : `Downloading… ${Math.round((u.progress || 0) * 100)}%`);
+      if (u.error) { clearInterval(iv); $("#updGo").disabled = false; }
+    }, 300);
+  });
+}
+
 // ---------------------------------------------------------------- boot
 async function boot() {
   makeLive();
   waveChart = makeStepChart($("#waveChart"));
   ro.observe($("#liveChart")); ro.observe($("#waveChart"));
-  bindSetpoints(); bindPresets(); bindTable(); bindRun(); bindMapper(); bindGen(); bindConsole(); bindMisc();
+  bindSetpoints(); bindPresets(); bindTable(); bindRun(); bindMapper(); bindGen(); bindConsole(); bindMisc(); bindUpdates();
 
   S.settings = (await api.load_settings()) || {};
   if (Array.isArray(S.settings.presets)) S.presets = S.settings.presets.concat(Array(8).fill(null)).slice(0, 8);
@@ -856,6 +904,7 @@ async function boot() {
   renderPresets(); renderTable(); onDisconnected();
   await refreshPorts(); await refreshDriver();
   poll(); autoLoop();
+  checkUpdate(); setInterval(() => checkUpdate(true), 6 * 3600 * 1000);
 }
 if (BROWSER) boot();
 else if (window.pywebview && window.pywebview.api) boot();

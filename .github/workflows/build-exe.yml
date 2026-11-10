@@ -41,13 +41,18 @@ jobs:
             else { Write-Host "No CH34x installer found in vendor zip" }
           } catch { Write-Host "Driver fetch failed: $_ (app will link to WCH instead)" }
 
+      - name: Stamp build number
+        shell: pwsh
+        run: |
+          '{"build": ${{ github.run_number }}, "sha": "${{ github.sha }}"}' | Out-File -Encoding ascii app\build_info.json
+
       - name: Build
         shell: pwsh
         run: |
           python -m pip install -r requirements.txt pyinstaller
           python -m PyInstaller --noconfirm --onefile --windowed --name "PSU-Studio" `
-            --add-data "app\web;web" --add-data "drivers;drivers" `
-            --paths app --hidden-import device --hidden-import driver --hidden-import importers `
+            --add-data "app\web;web" --add-data "drivers;drivers" --add-data "app\build_info.json;." `
+            --paths app --hidden-import device --hidden-import driver --hidden-import importers --hidden-import updater `
             app\psu_studio.py
           Get-Item dist\PSU-Studio.exe
 

@@ -22,6 +22,7 @@ sys.path.insert(0, HERE)
 import device as dev_mod  # noqa: E402
 import driver  # noqa: E402
 import importers  # noqa: E402
+import updater  # noqa: E402
 
 WEB = os.path.join(HERE, "web")
 DOCS = os.path.join(os.path.expanduser("~"), "Documents", "PSU Studio")
@@ -34,6 +35,7 @@ class Api:
         self._dev = dev_mod.Device()
         self._seq = dev_mod.Sequencer(self._dev)
         self._sim = sim
+        self._upd = updater.Updater()
         self._window = None
 
     # ---- discovery / driver ----------------------------------------
@@ -257,7 +259,32 @@ class Api:
         return dict(ok=True)
 
     def info(self):
-        return dict(version=VERSION, sim=self._sim, docs=DOCS, platform=sys.platform)
+        b = self._upd.info
+        return dict(version=VERSION, build=b["build"], sha=b["sha"], sim=self._sim, docs=DOCS, platform=sys.platform)
+
+    # ---- updates --------------------------------------------------------
+    def check_update(self, force=False):
+        return self._upd.check(force=bool(force))
+
+    def update_status(self):
+        return self._upd.status()
+
+    def open_url(self, url):
+        if not str(url).startswith("https://github.com/"):
+            return dict(ok=False)
+        webbrowser.open(url)
+        return dict(ok=True)
+
+    def install_update(self):
+        def quit_app():
+            try:
+                self.shutdown()
+            finally:
+                if self._window is not None:
+                    self._window.destroy()
+                else:
+                    os._exit(0)
+        return self._upd.install(quit_app)
 
     def shutdown(self):
         try:

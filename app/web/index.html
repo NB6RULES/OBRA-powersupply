@@ -9,7 +9,7 @@
 </head>
 <body>
 <header class="top">
-  <div class="brand"><span class="logo">⏻</span><b>PSU Studio</b><span class="model" id="modelTag">MP711128 · 30 V / 10 A</span></div>
+  <div class="brand"><span class="logo">⏻</span><b>PSU Studio</b><span class="ver" id="verTag"></span><span class="model" id="modelTag">MP711128 · 30 V / 10 A</span></div>
   <div class="conn">
     <span class="chip" id="driverChip" title="USB driver status">Checking driver…</span>
     <button class="btn ghost small" id="driverBtn" hidden>Install driver</button>
@@ -19,6 +19,7 @@
     <label class="tick" title="Connect automatically when the supply is plugged in"><input type="checkbox" id="autoConn" checked> Auto</label>
   </div>
   <div class="right">
+    <button class="update-pill" id="updPill" hidden title="A newer version is available"><span class="spark"></span><span id="updTxt">Update available</span></button>
     <button class="btn ghost small" id="recBtn" title="Log every reading straight to a CSV file on disk (Documents\\PSU Studio\\logs). Survives crashes and long runs."><span class="dot"></span>Record</button>
     <span class="status" id="statusTxt">Not connected</span>
   </div>
@@ -200,6 +201,21 @@
       <div class="grow"></div>
       <button value="cancel" class="btn ghost">Cancel</button>
       <button value="ok" class="btn primary">Insert</button>
+    </div>
+  </form>
+</dialog>
+
+<dialog id="updDlg">
+  <form method="dialog" class="dlg narrow" novalidate>
+    <h2 id="updTitle">Update available</h2>
+    <div class="upd-body" id="updBody"></div>
+    <div class="progress" id="updProg" hidden><div id="updBar"></div></div>
+    <div class="map-msg" id="updMsg"></div>
+    <div class="dlg-foot">
+      <button type="button" class="btn ghost small" id="updNotes">Release page</button>
+      <div class="grow"></div>
+      <button value="cancel" class="btn ghost">Later</button>
+      <button type="button" class="btn primary" id="updGo">Update &amp; restart</button>
     </div>
   </form>
 </dialog>

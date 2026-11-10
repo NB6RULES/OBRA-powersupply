@@ -231,3 +231,13 @@ textarea:focus { border-color: var(--accent); }
   .ro-val span { font-size: 42px; }
   .wave-body { grid-template-columns: 1fr; overflow-y: auto; }
 }
+
+/* update indicator */
+.ver { color: var(--faint); font: 11px var(--mono); cursor: pointer; }
+.ver:hover { color: var(--dim); }
+.update-pill { display: inline-flex; align-items: center; gap: 7px; border: 1px solid #2b8a55; background: #0f2a1b; color: #b8ffd6; border-radius: 99px; padding: 4px 11px; font-size: 12px; cursor: pointer; }
+.update-pill:hover { background: #143a25; }
+.update-pill .spark { width: 8px; height: 8px; border-radius: 50%; background: var(--ok); box-shadow: 0 0 10px var(--ok); animation: blink 1.6s infinite; }
+#updDlg { width: min(520px, 94vw); }
+.upd-body { color: var(--dim); line-height: 1.55; }
+.upd-body b { color: var(--text); font-weight: 600; }

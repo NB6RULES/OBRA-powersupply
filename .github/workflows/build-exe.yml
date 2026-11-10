@@ -1,0 +1,64 @@
+name: Build Windows exe
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Fetch CH340 driver installer (best effort)
+        shell: pwsh
+        continue-on-error: true
+        run: |
+          $ErrorActionPreference = "Stop"
+          $tmp = Join-Path $env:RUNNER_TEMP "vendor"
+          New-Item -ItemType Directory -Force $tmp | Out-Null
+          $ua = "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"
+          try {
+            Invoke-WebRequest "https://www.farnell.com/software/4437818.zip" -OutFile "$tmp\vendor.zip" -UserAgent $ua
+            Expand-Archive "$tmp\vendor.zip" "$tmp\x" -Force
+            # the vendor zip has zips inside zips
+            for ($n = 0; $n -lt 3; $n++) {
+              Get-ChildItem "$tmp\x" -Recurse -Filter *.zip | ForEach-Object {
+                Expand-Archive $_.FullName (Join-Path $_.DirectoryName $_.BaseName) -Force -ErrorAction SilentlyContinue
+                Remove-Item $_.FullName
+              }
+            }
+            $exe = Get-ChildItem "$tmp\x" -Recurse -Include "CH34*.exe","CH341SER*.exe" | Select-Object -First 1
+            if ($exe) { Copy-Item $exe.FullName drivers\ ; Write-Host "Bundled driver: $($exe.Name)" }
+            else { Write-Host "No CH34x installer found in vendor zip" }
+          } catch { Write-Host "Driver fetch failed: $_ (app will link to WCH instead)" }
+
+      - name: Build
+        shell: pwsh
+        run: |
+          python -m pip install -r requirements.txt pyinstaller
+          python -m PyInstaller --noconfirm --onefile --windowed --name "PSU-Studio" `
+            --add-data "app\web;web" --add-data "drivers;drivers" `
+            --paths app --hidden-import device --hidden-import driver --hidden-import importers `
+            app\psu_studio.py
+          Get-Item dist\PSU-Studio.exe
+
+      - name: Publish release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: build-${{ github.run_number }}
+          name: PSU Studio build ${{ github.run_number }}
+          target_commitish: ${{ github.sha }}
+          make_latest: "true"
+          body: |
+            Windows build of PSU Studio from ${{ github.sha }}.
+            Download **PSU-Studio.exe** below and double-click it. No install needed.
+          files: dist/PSU-Studio.exe

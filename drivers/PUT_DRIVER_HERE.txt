@@ -1,0 +1,12 @@
+Drop the CH340 driver installer in this folder, e.g.
+
+    CH341SER.EXE
+    or CH34x_Install_Windows_v3_4.EXE
+
+You'll find it inside the Multicomp Pro software zip
+(https://www.farnell.com/software/4437818.zip -> "driver.zip" / "Serial port chip driver_CH34x...zip"),
+or download CH341SER.EXE from WCH: https://www.wch-ic.com/downloads/CH341SER_EXE.html
+
+build.bat bakes whatever .exe is here into PSU Studio.exe, and the
+"Install driver" button in the app runs it (with the Windows admin prompt).
+If nothing is here, the button opens the WCH download page instead.

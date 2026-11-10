@@ -1,0 +1,209 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>PSU Studio</title>
+<link rel="stylesheet" href="vendor/uPlot.min.css">
+<link rel="stylesheet" href="app.css">
+</head>
+<body>
+<header class="top">
+  <div class="brand"><span class="logo">⏻</span><b>PSU Studio</b><span class="model" id="modelTag">MP711128 · 30 V / 10 A</span></div>
+  <div class="conn">
+    <span class="chip" id="driverChip" title="USB driver status">Checking driver…</span>
+    <button class="btn ghost small" id="driverBtn" hidden>Install driver</button>
+    <select id="portSel" title="Serial port"></select>
+    <button class="btn ghost small icon" id="refreshPorts" title="Rescan ports">↻</button>
+    <button class="btn primary small" id="connectBtn">Connect</button>
+    <label class="tick" title="Connect automatically when the supply is plugged in"><input type="checkbox" id="autoConn" checked> Auto</label>
+  </div>
+  <div class="right">
+    <button class="btn ghost small" id="recBtn" title="Log every reading to CSV"><span class="dot"></span>Record</button>
+    <span class="status" id="statusTxt">Not connected</span>
+  </div>
+</header>
+
+<main class="layout">
+  <!-- ============ LEFT: instrument panel ============ -->
+  <section class="panel instrument">
+    <div class="readouts">
+      <div class="ro v"><div class="ro-label">VOLTAGE</div><div class="ro-val"><span id="roV">0.000</span><em>V</em></div></div>
+      <div class="ro i"><div class="ro-label">CURRENT</div><div class="ro-val"><span id="roI">0.000</span><em>A</em></div></div>
+      <div class="ro p"><div class="ro-label">POWER</div><div class="ro-val"><span id="roP">0.00</span><em>W</em></div></div>
+      <div class="badges"><span class="mode" id="modeBadge">—</span><span class="trip" id="tripBadge" hidden></span></div>
+    </div>
+
+    <div class="setpoints">
+      <div class="sp" data-k="v"><label>Set voltage</label>
+        <div class="spin"><button data-d="-1">−</button><input id="spV" type="number" step="0.01" min="0"><span class="unit">V</span><button data-d="1">+</button></div></div>
+      <div class="sp" data-k="i"><label>Current limit</label>
+        <div class="spin"><button data-d="-1">−</button><input id="spI" type="number" step="0.001" min="0"><span class="unit">A</span><button data-d="1">+</button></div></div>
+      <div class="sp" data-k="ovp"><label>OVP</label>
+        <div class="spin"><button data-d="-1">−</button><input id="spOVP" type="number" step="0.01" min="0"><span class="unit">V</span><button data-d="1">+</button></div></div>
+      <div class="sp" data-k="ocp"><label>OCP</label>
+        <div class="spin"><button data-d="-1">−</button><input id="spOCP" type="number" step="0.001" min="0"><span class="unit">A</span><button data-d="1">+</button></div></div>
+      <div class="stepsize">Step <button data-s="0.001">1m</button><button data-s="0.01" class="on">10m</button><button data-s="0.1">0.1</button><button data-s="1">1</button>
+        <span class="hint">Enter applies · scroll to nudge</span></div>
+    </div>
+
+    <button class="output" id="outBtn" disabled><span class="led"></span><span id="outTxt">OUTPUT OFF</span><small>Esc = emergency off</small></button>
+
+    <div class="presets">
+      <div class="sec-h">Presets <span class="hint">click = load · right-click = save current</span></div>
+      <div class="preset-grid" id="presetGrid"></div>
+    </div>
+  </section>
+
+  <!-- ============ RIGHT: tabs ============ -->
+  <section class="panel work">
+    <nav class="tabs">
+      <button class="tab on" data-tab="live">Live</button>
+      <button class="tab" data-tab="wave">Waveform</button>
+      <button class="tab" data-tab="console">SCPI console</button>
+      <div class="tab-spacer"></div>
+      <div class="seq-mini" id="seqMini" hidden><span class="pulse"></span><span id="seqMiniTxt">Running</span><button class="btn danger small" id="seqMiniStop">Stop</button></div>
+    </nav>
+
+    <!-- LIVE -->
+    <div class="pane on" id="pane-live">
+      <div class="toolbar">
+        <div class="seg" id="winSeg"><button data-w="30" class="on">30 s</button><button data-w="120">2 min</button><button data-w="600">10 min</button><button data-w="0">All</button></div>
+        <label class="tick"><input type="checkbox" id="showP" checked> Power</label>
+        <div class="grow"></div>
+        <label class="mini">Poll <select id="pollSel"><option>2</option><option>5</option><option selected>8</option><option>10</option><option>15</option></select> Hz</label>
+        <button class="btn ghost small" id="pauseBtn">Pause</button>
+        <button class="btn ghost small" id="clearLive">Clear</button>
+        <button class="btn ghost small" id="exportLive">Export CSV</button>
+      </div>
+      <div class="chart" id="liveChart"></div>
+      <div class="stats" id="liveStats"></div>
+    </div>
+
+    <!-- WAVEFORM -->
+    <div class="pane" id="pane-wave">
+      <div class="toolbar">
+        <button class="btn small" id="pasteBtn">Paste lookup table</button>
+        <button class="btn small" id="importBtn">Import Excel / CSV</button>
+        <input type="file" id="fileIn" accept=".xlsx,.xlsm,.xls,.csv,.tsv,.txt" hidden>
+        <button class="btn small" id="genBtn">Generate…</button>
+        <span class="sep"></span>
+        <button class="btn ghost small" id="addRow">+ Step</button>
+        <button class="btn ghost small" id="delRows">Delete selected</button>
+        <button class="btn ghost small" id="clearWave">Clear</button>
+        <div class="grow"></div>
+        <button class="btn ghost small" id="exportWave">Export CSV</button>
+      </div>
+      <div class="wave-body">
+        <div class="wave-table-wrap">
+          <table class="wave-table">
+            <thead><tr><th><input type="checkbox" id="selAll"></th><th>#</th><th>Voltage V</th><th>Current A</th><th>Time s</th><th>On</th></tr></thead>
+            <tbody id="waveBody"></tbody>
+          </table>
+          <div class="wave-empty" id="waveEmpty">
+            <p><b>No steps yet.</b></p>
+            <p>Paste a lookup table straight from Excel (Ctrl+V anywhere on this tab), import an .xlsx / .csv, or generate a sine, ramp or square wave.</p>
+          </div>
+        </div>
+        <div class="wave-right">
+          <div class="chart small" id="waveChart"></div>
+          <div class="wave-sum" id="waveSum"></div>
+          <div class="run-box">
+            <div class="row">
+              <label>Loops <input type="number" id="loops" value="1" min="0" step="1"><span class="hint">0 = forever</span></label>
+              <label>From step <input type="number" id="fromStep" value="1" min="1" step="1"></label>
+              <label>to <input type="number" id="toStep" value="" min="1" step="1" placeholder="end"></label>
+            </div>
+            <div class="row">
+              <label class="tick"><input type="checkbox" id="outOn" checked> Turn output on at start</label>
+              <label class="tick"><input type="checkbox" id="outOff" checked> Turn output off when done</label>
+            </div>
+            <div class="progress"><div id="seqBar"></div></div>
+            <div class="row">
+              <button class="btn primary" id="runBtn">▶ Run waveform</button>
+              <button class="btn danger" id="stopBtn" disabled>■ Stop</button>
+              <span class="hint" id="seqTxt">Steps are timed by the PC; min 50 ms per step.</span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- CONSOLE -->
+    <div class="pane" id="pane-console">
+      <div class="console" id="consoleOut"></div>
+      <form class="console-in" id="consoleForm">
+        <input id="consoleCmd" placeholder="SCPI command, e.g. *IDN?  ·  VOLT 5  ·  MEAS:ALL?   (↑ for history)" autocomplete="off" spellcheck="false">
+        <button class="btn primary small">Send</button>
+      </form>
+      <div class="hint pad">Polling traffic is hidden. Known commands: *IDN? · VOLT &lt;v&gt; · VOLT? · CURR &lt;a&gt; · CURR? · VOLT:LIM &lt;v&gt; · CURR:LIM &lt;a&gt; · OUTP ON|OFF · OUTP? · MEAS:VOLT? · MEAS:CURR? · MEAS:POW? · MEAS:ALL?</div>
+    </div>
+  </section>
+</main>
+
+<!-- ============ Import / paste mapper ============ -->
+<dialog id="mapDlg">
+  <form method="dialog" class="dlg" novalidate>
+    <h2 id="mapTitle">Map columns</h2>
+    <div class="dlg-row" id="pasteRow">
+      <textarea id="pasteArea" spellcheck="false" placeholder="Paste here: copy cells from Excel, or text like&#10;time,voltage,current&#10;0,5,1&#10;0.5,7.5,1&#10;1.0,10,1.2"></textarea>
+    </div>
+    <div class="dlg-row" id="sheetRow" hidden><label>Sheet <select id="sheetSel"></select></label></div>
+    <div class="dlg-row opts">
+      <label class="tick"><input type="checkbox" id="hasHeader"> First row is a header</label>
+      <label>Time units <select id="tUnit"><option value="1">s</option><option value="0.001">ms</option><option value="60">min</option></select></label>
+      <label>Voltage units <select id="vUnit"><option value="1">V</option><option value="0.001">mV</option></select></label>
+      <label>Current units <select id="iUnit"><option value="1">A</option><option value="0.001">mA</option></select></label>
+    </div>
+    <div class="preview-wrap"><table class="preview" id="mapPreview"></table></div>
+    <div class="dlg-row opts">
+      <label>Step time if no time column <input type="number" id="defDt" value="1" step="0.05" min="0.05"> s</label>
+      <label>Current if no current column <input type="number" id="defI" value="1" step="0.01" min="0"> A</label>
+      <label>Voltage if no voltage column <input type="number" id="defV" value="0" step="0.01" min="0"> V</label>
+    </div>
+    <div class="dlg-row opts">
+      <label title="For dense lookup tables (time vs value): interpolate onto an even grid">Resample to <input type="number" id="resample" value="0" step="0.05" min="0"> s steps <span class="hint">0 = use rows as-is</span></label>
+      <label>Hold last point <input type="number" id="lastDt" value="" step="0.05" min="0.05" placeholder="auto"> s</label>
+    </div>
+    <div class="map-msg" id="mapMsg"></div>
+    <div class="dlg-foot">
+      <select id="mapMode"><option value="replace">Replace waveform</option><option value="append">Append to waveform</option></select>
+      <div class="grow"></div>
+      <button value="cancel" class="btn ghost">Cancel</button>
+      <button value="ok" class="btn primary" id="mapOk">Import</button>
+    </div>
+  </form>
+</dialog>
+
+<!-- ============ Generator ============ -->
+<dialog id="genDlg">
+  <form method="dialog" class="dlg narrow" novalidate>
+    <h2>Generate waveform</h2>
+    <div class="gen-grid">
+      <label>Shape <select id="gShape">
+        <option value="sine">Sine</option><option value="triangle">Triangle</option><option value="square">Square</option>
+        <option value="rampup">Ramp up</option><option value="rampdown">Ramp down</option><option value="saw">Sawtooth</option>
+        <option value="stairs">Staircase</option></select></label>
+      <label>Min voltage <input type="number" id="gMin" value="0" step="0.1"> V</label>
+      <label>Max voltage <input type="number" id="gMax" value="12" step="0.1"> V</label>
+      <label>Period <input type="number" id="gPeriod" value="10" step="0.5" min="0.1"> s</label>
+      <label>Cycles <input type="number" id="gCycles" value="1" step="1" min="1"></label>
+      <label>Points per cycle <input type="number" id="gPts" value="40" step="1" min="2"></label>
+      <label>Current limit <input type="number" id="gI" value="1" step="0.01" min="0"> A</label>
+    </div>
+    <div class="chart tiny" id="genChart"></div>
+    <div class="map-msg" id="genMsg"></div>
+    <div class="dlg-foot">
+      <select id="genMode"><option value="replace">Replace waveform</option><option value="append">Append to waveform</option></select>
+      <div class="grow"></div>
+      <button value="cancel" class="btn ghost">Cancel</button>
+      <button value="ok" class="btn primary">Insert</button>
+    </div>
+  </form>
+</dialog>
+
+<div class="toast" id="toast"></div>
+<script src="vendor/uPlot.iife.min.js"></script>
+<script src="app.js"></script>
+</body>
+</html>

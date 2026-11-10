@@ -99,8 +99,8 @@ function makeStepChart(el, extraOpts = {}) {
     axes: [axis({ values: (u, v) => v.map(x => fmtTime(x)) }), axis({ scale: "V", values: (u, v) => v.map(x => x + " V") }),
            axis({ scale: "A", side: 1, size: 62, grid: { show: false }, values: (u, v) => v.map(x => x + " A") })],
     series: [{ label: "t", value: (u, v) => v == null ? "—" : fmtTime(v) },
-      { label: "Voltage", scale: "V", stroke: C.v, width: 1.8, fill: "rgba(255,176,32,.07)", paths: uPlot.paths.stepped({ align: 1 }), value: (u, v) => fmt(v, 3) + " V" },
-      { label: "Current", scale: "A", stroke: C.i, width: 1.4, paths: uPlot.paths.stepped({ align: 1 }), value: (u, v) => fmt(v, 3) + " A" }],
+      { label: "Voltage", scale: "V", stroke: C.v, width: 1.8, fill: "rgba(255,176,32,.07)", paths: uPlot.paths.stepped({ align: 1 }), points: { show: false }, value: (u, v) => fmt(v, 3) + " V" },
+      { label: "Current", scale: "A", stroke: C.i, width: 1.4, paths: uPlot.paths.stepped({ align: 1 }), points: { show: false }, value: (u, v) => fmt(v, 3) + " A" }],
     plugins: [cursorLinePlugin()],
     ...extraOpts,
   }, [[], [], []], el);

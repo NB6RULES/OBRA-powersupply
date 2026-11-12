@@ -271,11 +271,13 @@ async function refreshPorts() {
 async function refreshDriver() {
   const d = await api.driver_status();
   const chip = $("#driverChip"), btn = $("#driverBtn");
-  chip.className = "chip " + ({ ok: "ok", installed: "warn", missing: "bad", nonwin: "" })[d.state];
-  chip.textContent = ({ ok: "USB ✓ supply detected", installed: "Driver OK · plug in supply", missing: "CH340 driver missing", nonwin: "Driver: built-in" })[d.state];
+  chip.className = "chip " + ({ ok: "ok", installed: "warn", missing: "bad", nonwin: "", linux: "", perm: "bad", brltty: "bad", nodev: "warn" })[d.state];
+  chip.textContent = ({ ok: "USB ✓ supply detected", installed: "Driver OK · plug in supply", missing: "CH340 driver missing", nonwin: "Driver: built-in",
+    linux: "Driver built in · plug in supply", perm: "No USB permission", brltty: "USB blocked by BRLTTY", nodev: "USB seen · no port" })[d.state] || d.state;
+  chip.style.cursor = "help"; chip.onclick = () => toast(d.msg, d.state === "ok" ? "" : "err", 9000);
   chip.title = d.msg;
-  btn.hidden = !(d.state === "missing" || d.state === "installed");
-  btn.textContent = d.state === "installed" ? "Reinstall driver" : "Install driver";
+  btn.hidden = !["missing", "installed", "perm"].includes(d.state);
+  btn.textContent = d.state === "perm" ? "Fix USB access" : d.state === "installed" ? "Reinstall driver" : "Install driver";
   return d;
 }
 async function connectToggle() {
@@ -941,6 +943,19 @@ function openUpd() {
   $("#updMsg").textContent = ""; $("#updProg").hidden = true;
   $("#updDlg").showModal();
 }
+// Linux/browser mode: the server restarts as the new version; reload once it's back
+function waitForRestart() {
+  let wentDown = false; const t0 = Date.now();
+  const tick = async () => {
+    try {
+      const r = await fetch("/api/info", { method: "POST", body: "[]", cache: "no-store" });
+      const j = await r.json();
+      if (wentDown || (updState && j.build >= updState.latest.build)) { location.reload(); return; }
+    } catch (e) { wentDown = true; }
+    if (Date.now() - t0 < 40000) setTimeout(tick, 700); else $("#updMsg").textContent = "Updated - close and reopen PSU Studio.";
+  };
+  setTimeout(tick, 800);
+}
 function bindUpdates() {
   $("#updPill").addEventListener("click", openUpd);
   $("#verTag").addEventListener("click", async () => { const st = await checkUpdate(true); if (!st.available) toast(st.error || (st.dev ? "Running from source - no update check" : "You're on the latest build")); });
@@ -958,6 +973,7 @@ function bindUpdates() {
       $("#updMsg").className = "map-msg " + (u.error ? "err" : "");
       $("#updMsg").textContent = u.error || (u.progress >= 1 ? "Restarting…" : `Downloading… ${Math.round((u.progress || 0) * 100)}%`);
       if (u.error) { clearInterval(iv); $("#updGo").disabled = false; }
+      if (u.progress >= 1 && BROWSER) { clearInterval(iv); waitForRestart(); }
     }, 300);
   });
 }
@@ -984,6 +1000,10 @@ async function boot() {
   poll(); autoLoop();
   checkUpdate(); setInterval(() => checkUpdate(true), 6 * 3600 * 1000);
 }
-if (BROWSER) boot();
+if (BROWSER) {
+  boot();
+  // tell the local server the window closed, so the Linux app quits with it
+  window.addEventListener("pagehide", () => { try { navigator.sendBeacon("/api/bye", "[]"); } catch (e) {} });
+}
 else if (window.pywebview && window.pywebview.api) boot();
 else window.addEventListener("pywebviewready", boot, { once: true });

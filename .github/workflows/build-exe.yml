@@ -1,4 +1,4 @@
-name: Build Windows exe
+name: Build apps
 
 on:
   push:
@@ -9,7 +9,7 @@ permissions:
   contents: write
 
 jobs:
-  build:
+  windows:
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
@@ -56,6 +56,64 @@ jobs:
             app\psu_studio.py
           Get-Item dist\PSU-Studio.exe
 
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows
+          path: dist/PSU-Studio.exe
+
+  linux:
+    # oldest supported runner = oldest glibc, so the binary runs on more distros
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Stamp build number
+        run: echo '{"build": ${{ github.run_number }}, "sha": "${{ github.sha }}"}' > app/build_info.json
+
+      - name: Build
+        run: |
+          # no pywebview on Linux: the app serves its UI to a Chrome/Chromium app window or the default browser
+          python -m pip install pyserial openpyxl pyinstaller
+          python -m PyInstaller --noconfirm --onefile --name "PSU-Studio-linux-x86_64" \
+            --add-data "app/web:web" --add-data "app/build_info.json:." \
+            --paths app --hidden-import device --hidden-import driver --hidden-import importers --hidden-import updater \
+            --exclude-module pandas --exclude-module numpy --exclude-module tkinter --exclude-module webview \
+            app/psu_studio.py
+          ls -la dist/
+
+      - name: Smoke test
+        run: |
+          ./dist/PSU-Studio-linux-x86_64 --sim --no-open &
+          PID=$!
+          for i in $(seq 1 30); do curl -sf -X POST -d '[]' http://127.0.0.1:8765/api/info && break; sleep 1; done
+          echo
+          curl -sf http://127.0.0.1:8765/index.html | grep -q "PSU Studio"
+          curl -sf -X POST -d '[]' http://127.0.0.1:8765/api/auto_connect | grep -q '"ok": true'
+          sleep 1
+          curl -sf -X POST -d '[0]' http://127.0.0.1:8765/api/get_state | grep -q '"connected": true'
+          kill $PID
+          echo "smoke test passed"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: linux
+          path: dist/PSU-Studio-linux-x86_64
+
+  release:
+    needs: [windows, linux]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: out
+
+      - name: Restore executable bit
+        run: chmod +x out/linux/PSU-Studio-linux-x86_64 && ls -laR out
+
       - name: Publish release
         uses: softprops/action-gh-release@v2
         with:
@@ -64,6 +122,10 @@ jobs:
           target_commitish: ${{ github.sha }}
           make_latest: "true"
           body: |
-            Windows build of PSU Studio from ${{ github.sha }}.
-            Download **PSU-Studio.exe** below and double-click it. No install needed.
-          files: dist/PSU-Studio.exe
+            PSU Studio build ${{ github.run_number }} from ${{ github.sha }}.
+
+            - **Windows:** download **PSU-Studio.exe** and double-click it. No install needed.
+            - **Linux (x86_64):** download **PSU-Studio-linux-x86_64**, then `chmod +x PSU-Studio-linux-x86_64 && ./PSU-Studio-linux-x86_64`.
+          files: |
+            out/windows/PSU-Studio.exe
+            out/linux/PSU-Studio-linux-x86_64

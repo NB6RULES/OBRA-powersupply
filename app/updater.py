@@ -22,7 +22,8 @@ import urllib.request
 REPO = "NB6RULES/OBRA-powersupply"
 API = f"https://api.github.com/repos/{REPO}/releases/latest"
 RELEASES = f"https://github.com/{REPO}/releases/latest"
-ASSET = "PSU-Studio.exe"
+ASSET = {"win32": "PSU-Studio.exe", "linux": "PSU-Studio-linux-x86_64"}.get(
+    "linux" if sys.platform.startswith("linux") else sys.platform, "PSU-Studio.exe")
 HERE = getattr(sys, "_MEIPASS", os.path.dirname(os.path.abspath(__file__)))
 
 
@@ -36,7 +37,7 @@ def build_info():
 
 
 def is_frozen_exe():
-    return bool(getattr(sys, "frozen", False)) and os.name == "nt"
+    return bool(getattr(sys, "frozen", False)) and (os.name == "nt" or sys.platform.startswith("linux"))
 
 
 def _get(url, timeout=8):
@@ -108,6 +109,16 @@ class Updater:
                         self.progress = got / total
             if os.path.getsize(new) < 1_000_000:
                 raise IOError("download looks incomplete")
+            if os.name != "nt":
+                # Linux: a running binary can be replaced in place; start the new one
+                # (it waits for the port) and let this one quit.
+                os.chmod(new, 0o755)
+                os.replace(new, exe)
+                subprocess.Popen([exe, "--no-open", "--after-update"], start_new_session=True,
+                                 stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                self.progress = 1.0
+                on_ready_to_quit()
+                return
             bat = os.path.join(tempfile.gettempdir(), "psu_studio_update.bat")
             with open(bat, "w", encoding="ascii", errors="replace") as f:
                 f.write(f"""@echo off

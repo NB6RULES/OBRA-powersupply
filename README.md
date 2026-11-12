@@ -1,9 +1,13 @@
 # PSU Studio
 
-[![Download PSU-Studio.exe](https://img.shields.io/badge/Download-PSU--Studio.exe-ffb020?style=for-the-badge&logo=windows&logoColor=black)](https://github.com/NB6RULES/OBRA-powersupply/releases/latest/download/PSU-Studio.exe)
+[![Download for Windows](https://img.shields.io/badge/Windows-PSU--Studio.exe-ffb020?style=for-the-badge&logo=windows&logoColor=black)](https://github.com/NB6RULES/OBRA-powersupply/releases/latest/download/PSU-Studio.exe)
+[![Download for Linux](https://img.shields.io/badge/Linux-x86__64-ffb020?style=for-the-badge&logo=linux&logoColor=black)](https://github.com/NB6RULES/OBRA-powersupply/releases/latest/download/PSU-Studio-linux-x86_64)
 [![Build](https://github.com/NB6RULES/OBRA-powersupply/actions/workflows/build-exe.yml/badge.svg)](https://github.com/NB6RULES/OBRA-powersupply/actions/workflows/build-exe.yml)
 
-**[⬇ Download the latest Windows .exe](https://github.com/NB6RULES/OBRA-powersupply/releases/latest/download/PSU-Studio.exe)** · single file, no install. Windows may show a SmartScreen warning because it isn't code-signed: click *More info → Run anyway*.
+Both buttons always point at the newest build. Single file, no install.
+
+- **Windows:** [PSU-Studio.exe](https://github.com/NB6RULES/OBRA-powersupply/releases/latest/download/PSU-Studio.exe). Windows may show a SmartScreen warning because it isn't code-signed: click *More info → Run anyway*.
+- **Linux (x86_64):** [PSU-Studio-linux-x86_64](https://github.com/NB6RULES/OBRA-powersupply/releases/latest/download/PSU-Studio-linux-x86_64). See [Run it (Linux)](#run-it-linux).
 
 ![PSU Studio running a waveform](docs/screenshot.png)
 
@@ -50,9 +54,23 @@ A cleaner control app for the **Multicomp Pro MP711127 / MP711128 / MP711129 / M
 2. Double-click `run.bat`. It installs the 3 packages the first time.
 3. To try it without hardware, double-click `run_simulator.bat`.
 
+## Run it (Linux)
+
+```sh
+chmod +x PSU-Studio-linux-x86_64
+./PSU-Studio-linux-x86_64          # add --sim to try it without the supply
+```
+
+- It opens in its own window if Chrome, Chromium, Edge or Brave is installed, otherwise in your default browser. Closing the window quits the app.
+- No driver needed: Linux has the CH340 driver built in.
+- **"No USB permission":** click **Fix USB access** in the top bar. It asks for your password once and installs a udev rule (`/etc/udev/rules.d/70-psu-studio.rules`) that gives the logged-in user access to the supply. Unplug and replug if it still complains. Without a graphical password prompt (pkexec), run instead: `sudo usermod -aG dialout $USER`, then log out and back in.
+- **"USB blocked by BRLTTY"** (common on Ubuntu): the braille-display service grabs the CH340 chip so no serial port appears. If you don't use a braille display: `sudo apt remove brltty`, then replug the supply.
+- Built on Ubuntu 22.04, so it needs glibc 2.35 or newer (Ubuntu 22.04+, Debian 12+, Fedora 36+ and similar). It updates itself like the Windows version.
+- From source instead: `./run.sh` (Python 3.10+).
+
 ## Build the .exe yourself
 
-Every push to `main` builds `PSU-Studio.exe` on GitHub Actions and publishes it as the latest release (the download button above). To build locally instead:
+Every push to `main` builds the Windows exe and the Linux binary on GitHub Actions, smoke-tests the Linux one, and publishes both as the latest release (the download buttons above). To build locally instead:
 
 1. Put the CH340 driver installer in `drivers\`. This is the `CH341SER.EXE` or `CH34x_Install_Windows_v3_4.EXE` from the Multicomp zip.
 2. Double-click `build.bat`.

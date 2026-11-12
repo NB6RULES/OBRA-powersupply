@@ -308,7 +308,51 @@ class Api:
 # ---------------------------------------------------------------------------
 # Browser fallback: tiny local server, POST /api/<method> with JSON args list
 # ---------------------------------------------------------------------------
+APP_BROWSERS = ["google-chrome", "google-chrome-stable", "chromium", "chromium-browser",
+                "microsoft-edge", "microsoft-edge-stable", "brave-browser", "vivaldi"]
+
+
+def _already_running(port):
+    """True if another PSU Studio already owns the port."""
+    import urllib.request
+    try:
+        req = urllib.request.Request(f"http://127.0.0.1:{port}/api/info", data=b"[]", method="POST")
+        with urllib.request.urlopen(req, timeout=1.5) as r:
+            return "version" in json.load(r)
+    except Exception:
+        return False
+
+
+def _open_window(url):
+    """
+    Open the UI. Prefer a Chromium-family browser in --app mode with its own
+    profile: that gives a real app window, and the process exits when the
+    window closes so we know to quit. Falls back to the default browser.
+    Returns the Popen of the app window, or None.
+    """
+    import shutil
+    if "--no-app" not in sys.argv:
+        for name in APP_BROWSERS:
+            exe = shutil.which(name)
+            if not exe:
+                continue
+            prof = os.path.join(os.path.expanduser("~"), ".config", "psu-studio", "window")
+            os.makedirs(prof, exist_ok=True)
+            try:
+                return subprocess.Popen(
+                    [exe, f"--app={url}", f"--user-data-dir={prof}", "--no-first-run",
+                     "--no-default-browser-check", "--window-size=1360,880", "--class=PSU Studio"],
+                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
+            except Exception:
+                continue
+    webbrowser.open(url)
+    return None
+
+
 def run_browser(api, port=8765):
+    last_call = [0.0]
+    bye_at = [0.0]
+
     class H(SimpleHTTPRequestHandler):
         def __init__(self, *a, **k):
             super().__init__(*a, directory=WEB, **k)
@@ -316,13 +360,24 @@ def run_browser(api, port=8765):
         def log_message(self, *a):
             pass
 
+        def end_headers(self):
+            self.send_header("Cache-Control", "no-store")
+            super().end_headers()
+
         def do_POST(self):
             if not self.path.startswith("/api/"):
                 self.send_error(404)
                 return
             name = self.path[5:]
             n = int(self.headers.get("Content-Length", 0))
-            args = json.loads(self.rfile.read(n) or b"[]")
+            raw = self.rfile.read(n)
+            if name == "bye":  # page closed (sendBeacon); quit unless it comes back
+                bye_at[0] = time.time()
+                self.send_response(204)
+                self.end_headers()
+                return
+            last_call[0] = time.time()
+            args = json.loads(raw or b"[]")
             fn = getattr(api, name, None)
             if not fn or name.startswith("_"):
                 self.send_error(404)
@@ -338,11 +393,55 @@ def run_browser(api, port=8765):
             self.end_headers()
             self.wfile.write(body)
 
-    srv = ThreadingHTTPServer(("127.0.0.1", port), H)
     url = f"http://127.0.0.1:{port}/index.html?browser=1"
+    # bind, retrying for a while (after a self-update the old copy may still be exiting)
+    srv = None
+    deadline = time.time() + (15 if "--after-update" in sys.argv else 2)
+    while srv is None:
+        try:
+            srv = ThreadingHTTPServer(("127.0.0.1", port), H)
+        except OSError:
+            if _already_running(port):
+                print("PSU Studio is already running - opening it.")
+                _open_window(url)
+                return
+            if time.time() > deadline:
+                raise
+            time.sleep(0.5)
+    srv.daemon_threads = True
     print("PSU Studio running at", url, "(Ctrl+C to quit)")
+
+    def quit_later(why):
+        print("Closing:", why)
+        threading.Thread(target=srv.shutdown, daemon=True).start()
+
+    win = [None]
+    opened_at = time.time()
     if "--no-open" not in sys.argv:
-        threading.Timer(0.6, lambda: webbrowser.open(url)).start()
+        win[0] = _open_window(url)
+
+    def lifecycle():
+        fallback_pending = False
+        while True:
+            time.sleep(1)
+            w = win[0]
+            if w is not None and w.poll() is not None:
+                if time.time() - opened_at < 5:
+                    # exited at once: Chrome handed off to an instance already running with this
+                    # profile, or couldn't start. Keep serving; open the default browser if no page shows up.
+                    win[0] = None
+                    fallback_pending = True
+                else:
+                    return quit_later("window closed")
+            if fallback_pending and time.time() - opened_at > 7:
+                fallback_pending = False
+                if last_call[0] == 0:
+                    webbrowser.open(url)
+            # page sent "bye" and nothing has called in since (a reload calls back within a second)
+            if bye_at[0] and bye_at[0] >= last_call[0] and time.time() - bye_at[0] > 8:
+                return quit_later("page closed")
+    if "--no-open" not in sys.argv or "--after-update" in sys.argv:
+        threading.Thread(target=lifecycle, daemon=True).start()
     try:
         srv.serve_forever()
     except KeyboardInterrupt:
@@ -354,7 +453,8 @@ def run_browser(api, port=8765):
 def main():
     sim = "--sim" in sys.argv
     api = Api(sim=sim)
-    if "--browser" in sys.argv:
+    # Linux/macOS builds don't bundle a GUI toolkit: serve the UI to a browser window instead
+    if "--browser" in sys.argv or (sys.platform != "win32" and "--webview" not in sys.argv):
         run_browser(api)
         return
     try:

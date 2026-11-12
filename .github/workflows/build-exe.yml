@@ -72,7 +72,8 @@ jobs:
           python-version: "3.12"
 
       - name: Stamp build number
-        run: echo '{"build": ${{ github.run_number }}, "sha": "${{ github.sha }}"}' > app/build_info.json
+        run: |
+          echo '{"build": ${{ github.run_number }}, "sha": "${{ github.sha }}"}' > app/build_info.json
 
       - name: Build
         run: |

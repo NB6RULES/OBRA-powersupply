@@ -14,6 +14,12 @@ A cleaner control app for the **Multicomp Pro MP711127 / MP711128 / MP711129 / M
 - **Big live readouts** for V, A and W, with a CV/CC badge and a trip warning.
 - **Setpoints**: set voltage, current limit, OVP and OCP. Type a value and press Enter, use the +/− buttons, or Ctrl+scroll. Step size is selectable.
 - **Output button**, plus **Esc as an emergency off**. Esc also stops a running waveform.
+- **Power meter**: switch it on to track, while the output is on:
+  - peak power, with the voltage, current and time it happened
+  - average power and average current (time-weighted)
+  - peak current, energy (Wh), charge (mAh) and output-on time
+  - It flashes **NEW PEAK** when the record is beaten, and marks the peak on the live chart and in JPEG exports. It keeps counting while the chart is paused. Reset starts a new measurement.
+  - Short spikes (inrush) can be missed between readings: raise Poll to 15 Hz to catch more.
 - **8 presets**. Click one to load it. Right-click to save the current settings into it.
 - **Live chart** with 30 s / 2 min / 10 min / all views and drag-to-zoom. It shows min/avg/max, energy in Wh and charge in mAh, and you can export the data to CSV.
 - **Logging and export**:

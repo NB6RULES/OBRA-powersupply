@@ -65,8 +65,37 @@ const vAxes = k => [axis({ space: 60 * k, values: (u, v) => v.map(x => fmtTime(x
 function sized(el) { const r = el.getBoundingClientRect(); return { width: Math.max(200, r.width - 12), height: Math.max(140, r.height - 40) }; }
 
 let liveChart, waveChart, genChart;
+// purple dot + label where the power meter recorded its peak
+function peakPlugin(k = 1) {
+  return { hooks: { draw: [u => {
+    const m = S.meter;
+    if (!m || !m.enabled || !m.samples || !m.peak_at) return;
+    const t = m.peak_at - S.t0;
+    if (t < u.scales.x.min || t > u.scales.x.max) return;
+    const showP = u.series[3].show && u.data[3] && u.data[3].length;
+    const y = showP ? u.valToPos(m.peak_p, "W", true) : u.valToPos(m.peak_v, "V", true);
+    const x = u.valToPos(t, "x", true);
+    if (!isFinite(x) || !isFinite(y)) return;
+    const g = u.ctx, r = (window.devicePixelRatio || 1);
+    g.save();
+    g.strokeStyle = "rgba(197,140,255,.35)"; g.setLineDash([3 * r, 3 * r]); g.lineWidth = r;
+    g.beginPath(); g.moveTo(x, u.bbox.top); g.lineTo(x, u.bbox.top + u.bbox.height); g.stroke(); g.setLineDash([]);
+    g.fillStyle = C.p; g.strokeStyle = "#0e1216"; g.lineWidth = 2 * r;
+    g.beginPath(); g.arc(x, y, 5 * r * k, 0, Math.PI * 2); g.fill(); g.stroke();
+    const label = `Peak ${fmt(m.peak_p, 2)} W`;
+    g.font = `600 ${Math.round(11 * k * r)}px ` + css.getPropertyValue("--mono");
+    const w = g.measureText(label).width + 10 * r * k, h = 18 * r * k;
+    let lx = x + 9 * r * k; if (lx + w > u.bbox.left + u.bbox.width) lx = x - 9 * r * k - w;
+    const ly = Math.max(u.bbox.top, y - h - 6 * r * k);
+    g.fillStyle = "rgba(20,14,30,.92)"; g.strokeStyle = C.p; g.lineWidth = r;
+    g.beginPath(); g.roundRect ? g.roundRect(lx, ly, w, h, 4 * r) : g.rect(lx, ly, w, h); g.fill(); g.stroke();
+    g.fillStyle = "#ead9ff"; g.textBaseline = "middle"; g.fillText(label, lx + 5 * r * k, ly + h / 2);
+    g.restore();
+  }] } };
+}
 function liveOpts(k = 1) {
   return {
+    plugins: [peakPlugin(k)],
     cursor: { drag: { x: true, y: false } },
     scales: { x: { time: false }, V: { range: (u, a, b) => [0, Math.max(1, b * 1.15)] }, A: { range: (u, a, b) => [0, Math.max(0.1, b * 1.15)] }, W: { range: (u, a, b) => [0, Math.max(1, b * 1.15)] } },
     axes: vAxes(k),
@@ -177,6 +206,7 @@ async function poll() {
       if (!wasConnected) onConnected(r);
     } else { renderSeq(r.sequencer); if (wasConnected) onDisconnected(); }
     renderRec(r.recording);
+    renderMeter(r);
     $("#statusTxt").textContent = r.error || (r.connected ? `${r.port} · ${shortIdn(r.idn)}` : "Not connected");
     $("#statusTxt").style.color = r.error ? "var(--bad)" : "";
   } catch (e) { /* bridge not ready yet */ }
@@ -805,7 +835,8 @@ function bindMisc() {
   });
   $("#jpegLive").addEventListener("click", () => {
     if (!S.live.t.length) { toast("Nothing on the chart yet", "err"); return; }
-    const sub = [$("#statusTxt").textContent, ...$$("#liveStats span").map(e => e.textContent)].filter(Boolean).join("   |   ");
+    const m = S.meter, pm = m && m.enabled && m.samples ? [`Peak ${fmt(m.peak_p, 2)} W @ ${fmt(m.peak_v, 2)} V × ${fmt(m.peak_i, 3)} A`, `Avg ${fmt(m.avg_p, 2)} W over ${fmtDur(m.on_time)}`] : [];
+    const sub = [$("#statusTxt").textContent, ...pm, ...$$("#liveStats span").map(e => e.textContent)].filter(Boolean).join("   |   ");
     saveJpeg(liveChart, "live", "Live readings", sub, `psu_chart_${fileStamp()}.jpg`);
   });
   $("#jpegWave").addEventListener("click", () => {
@@ -835,6 +866,52 @@ function bindMisc() {
       const r = await api.start_record(); toast("Recording to " + r.path, "", 4000);
     }
   });
+}
+
+// ---------------------------------------------------------------- power meter
+function clock(sec) { const d = new Date(sec * 1000); return `${pad2(d.getHours())}:${pad2(d.getMinutes())}:${pad2(d.getSeconds())}`; }
+function fmtDur(s) {
+  s = Math.max(0, Math.floor(s || 0));
+  const h = Math.floor(s / 3600), m = Math.floor(s % 3600 / 60), r = s % 60;
+  return h ? `${h}h ${pad2(m)}m ${pad2(r)}s` : m ? `${m}m ${pad2(r)}s` : `${r}s`;
+}
+const fmtW = w => w >= 100 ? fmt(w, 1) : w >= 10 ? fmt(w, 2) : fmt(w, 3);
+let lastPeakCount = 0, flashT;
+function renderMeter(r) {
+  const m = r.meter; if (!m) return;
+  const prev = S.meter; S.meter = m;
+  const box = $("#meter"), has = m.samples > 0;
+  box.classList.toggle("off", !m.enabled);
+  box.classList.toggle("live", m.enabled && !!(r.state && r.state.out));
+  if (document.activeElement !== $("#pmOn")) $("#pmOn").checked = m.enabled;
+  $("#pmPeak").textContent = has ? fmtW(m.peak_p) : "—";
+  $("#pmAvg").textContent = has ? fmtW(m.avg_p) : "—";
+  $("#pmPeakAt").textContent = has ? `${fmt(m.peak_v, 2)} V × ${fmt(m.peak_i, 3)} A · ${clock(m.peak_at)}`
+    : m.enabled ? "Waiting for the output to switch on…" : "Switch on to start tracking";
+  $("#pmAvgI").textContent = has ? `avg ${fmt(m.avg_i, 3)} A` : "\u00a0";
+  $("#pmMaxI").textContent = has ? fmt(m.max_i, 3) + " A" : "—";
+  $("#pmWh").textContent = has ? (m.energy_wh < 1 ? fmt(m.energy_wh * 1000, 2) + " mWh" : fmt(m.energy_wh, 3) + " Wh") : "—";
+  $("#pmMah").textContent = has ? (m.charge_mah < 1000 ? fmt(m.charge_mah, 1) + " mAh" : fmt(m.charge_mah / 1000, 3) + " Ah") : "—";
+  $("#pmTime").textContent = has ? fmtDur(m.on_time) : "—";
+  const hz = r.poll_hz || 8, foot = $("#pmFoot");
+  foot.className = "pm-foot " + (m.enabled && hz < 10 ? "warn" : "");
+  foot.textContent = m.enabled
+    ? `Sampling ${hz}×/s · spikes shorter than ~${Math.round(1000 / hz)} ms can be missed${hz < 15 ? " (raise Poll on the Live tab for inrush)" : ""}`
+    : "Counts only while the output is on. Keeps running when the chart is paused.";
+  // celebrate a new peak (skip the very first sample so it doesn't flash on start)
+  if (m.enabled && m.peak_count > lastPeakCount && lastPeakCount > 0 && m.peak_count > 1) {
+    box.classList.add("flash"); clearTimeout(flashT); flashT = setTimeout(() => box.classList.remove("flash"), 1400);
+  }
+  lastPeakCount = m.peak_count;
+  if (prev && (prev.peak_at !== m.peak_at || prev.enabled !== m.enabled)) liveChart && liveChart.redraw(false);
+}
+function bindMeter() {
+  $("#pmOn").addEventListener("change", async e => {
+    const st = await api.meter_enable(e.target.checked);
+    S.settings.meterOn = st.enabled; saveSettings();
+    if (st.enabled && !S.connected) toast("Power meter armed - it starts counting once you're connected and the output is on");
+  });
+  $("#pmReset").addEventListener("click", async () => { lastPeakCount = 0; await api.meter_reset(); toast("Power meter reset"); liveChart.redraw(false); });
 }
 
 // ---------------------------------------------------------------- updates
@@ -890,13 +967,14 @@ async function boot() {
   makeLive();
   waveChart = makeStepChart($("#waveChart"));
   ro.observe($("#liveChart")); ro.observe($("#waveChart"));
-  bindSetpoints(); bindPresets(); bindTable(); bindRun(); bindMapper(); bindGen(); bindConsole(); bindMisc(); bindUpdates();
+  bindSetpoints(); bindPresets(); bindTable(); bindRun(); bindMapper(); bindGen(); bindConsole(); bindMisc(); bindUpdates(); bindMeter();
 
   S.settings = (await api.load_settings()) || {};
   if (Array.isArray(S.settings.presets)) S.presets = S.settings.presets.concat(Array(8).fill(null)).slice(0, 8);
   if (Array.isArray(S.settings.steps)) S.steps = S.settings.steps;
   if (S.settings.run) { $("#loops").value = S.settings.run.loops ?? 1; $("#outOn").checked = S.settings.run.outOn !== false; $("#outOff").checked = S.settings.run.outOff !== false; }
   if (S.settings.autoConn === false) $("#autoConn").checked = false;
+  if (S.settings.meterOn) { await api.meter_enable(true); $("#pmOn").checked = true; }
   if (!S.settings.presets) { // sensible starter presets
     S.presets = [{ name: "Logic", v: 3.3, i: 0.5, ovp: 3.6, ocp: 0.6 }, { name: "USB", v: 5, i: 1, ovp: 5.5, ocp: 1.2 },
       { name: "12 V", v: 12, i: 2, ovp: 13, ocp: 2.2 }, { name: "Car", v: 13.8, i: 5, ovp: 15, ocp: 5.5 }, null, null, null, null];

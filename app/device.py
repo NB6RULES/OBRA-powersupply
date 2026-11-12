@@ -214,6 +214,68 @@ def _f(s, default=0.0):
         return default
 
 
+class PowerMeter:
+    """
+    Peak / average power tracker. Fed from the poll loop, so it keeps counting
+    while the chart is paused. Only counts samples taken while the output is on,
+    and averages are time-weighted (energy / on-time), so uneven polling or a
+    stalled read doesn't skew them.
+    """
+    MAX_GAP = 1.0  # s; longer gaps (comms hiccup, output was off) aren't integrated
+
+    def __init__(self):
+        self.lock = threading.Lock()
+        self.enabled = False
+        self.reset()
+
+    def reset(self):
+        with self.lock:
+            self.peak_p = self.peak_v = self.peak_i = 0.0
+            self.peak_at = 0.0          # wall clock (time.time()) of peak power
+            self.max_i = 0.0
+            self.energy_j = 0.0
+            self.charge_c = 0.0
+            self.on_time = 0.0
+            self.samples = 0
+            self.started = time.time()
+            self.peak_count = 0         # bumps on every new peak, UI uses it to flash
+            self._last = None           # (wall t, p, i) of previous on-sample
+
+    def set_enabled(self, on):
+        with self.lock:
+            self.enabled = bool(on)
+            self._last = None
+
+    def feed(self, t_wall, v, i, p, out):
+        with self.lock:
+            if not self.enabled or not out:
+                self._last = None
+                return
+            if self._last is not None:
+                dt = t_wall - self._last[0]
+                if 0 < dt <= self.MAX_GAP:
+                    self.energy_j += 0.5 * (p + self._last[1]) * dt
+                    self.charge_c += 0.5 * (i + self._last[2]) * dt
+                    self.on_time += dt
+            self._last = (t_wall, p, i)
+            self.samples += 1
+            if p > self.peak_p:
+                self.peak_p, self.peak_v, self.peak_i, self.peak_at = p, v, i, t_wall
+                self.peak_count += 1
+            if i > self.max_i:
+                self.max_i = i
+
+    def status(self):
+        with self.lock:
+            avg_p = self.energy_j / self.on_time if self.on_time > 0 else (self.peak_p if self.samples else 0.0)
+            avg_i = self.charge_c / self.on_time if self.on_time > 0 else (self.max_i if self.samples else 0.0)
+            return dict(enabled=self.enabled, samples=self.samples,
+                        peak_p=self.peak_p, peak_v=self.peak_v, peak_i=self.peak_i, peak_at=self.peak_at,
+                        peak_count=self.peak_count, max_i=self.max_i,
+                        avg_p=avg_p, avg_i=avg_i, energy_wh=self.energy_j / 3600,
+                        charge_mah=self.charge_c / 3.6, on_time=self.on_time, started=self.started)
+
+
 class Device:
     """High level supply control + measurement poller."""
 
@@ -233,6 +295,7 @@ class Device:
         self._info_ok = None  # does MEAS:ALL:INFO? work on this firmware
         self.recorder = None
         self.paused = False
+        self.meter = PowerMeter()
 
     # -- connection -------------------------------------------------
     def connect(self, port):
@@ -351,7 +414,9 @@ class Device:
                         else:
                             mode = "CV"
                     self.state.update(v=v, i=i, p=p, mode=mode)
-                    t = time.time() - self.t0
+                    now = time.time()
+                    self.meter.feed(now, v, i, p, mode != "OFF" and self.state["out"])
+                    t = now - self.t0
                     row = (t, v, i, p, self.state["v_set"], self.state["i_set"])
                     self.samples.append(row)
                     self.sample_seq += 1

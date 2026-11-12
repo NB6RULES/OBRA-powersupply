@@ -50,6 +50,35 @@
 
     <button class="output" id="outBtn" disabled><span class="led"></span><span id="outTxt">OUTPUT OFF</span><small>Esc = emergency off</small></button>
 
+    <div class="meter off" id="meter">
+      <div class="meter-h">
+        <label class="switch" title="Track peak and average power while the output is on"><input type="checkbox" id="pmOn"><span></span></label>
+        <b>Power meter</b>
+        <span class="new-peak" id="pmNew">NEW PEAK</span>
+        <div class="grow"></div>
+        <button class="btn ghost small" id="pmReset" title="Start a fresh measurement">Reset</button>
+      </div>
+      <div class="meter-body">
+        <div class="pm-peak">
+          <div class="pm-l">PEAK POWER</div>
+          <div class="pm-big"><span id="pmPeak">—</span><em>W</em></div>
+          <div class="pm-sub" id="pmPeakAt">Turn on, then switch the output on</div>
+        </div>
+        <div class="pm-avg">
+          <div class="pm-l">AVERAGE</div>
+          <div class="pm-big small"><span id="pmAvg">—</span><em>W</em></div>
+          <div class="pm-sub" id="pmAvgI">&nbsp;</div>
+        </div>
+        <div class="pm-grid">
+          <div><span>Peak current</span><b id="pmMaxI">—</b></div>
+          <div><span>Energy</span><b id="pmWh">—</b></div>
+          <div><span>Charge</span><b id="pmMah">—</b></div>
+          <div><span>Output-on time</span><b id="pmTime">—</b></div>
+        </div>
+        <div class="pm-foot" id="pmFoot"></div>
+      </div>
+    </div>
+
     <div class="presets">
       <div class="sec-h">Presets <span class="hint">click = load · right-click = save current</span></div>
       <div class="preset-grid" id="presetGrid"></div>

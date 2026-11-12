@@ -124,7 +124,17 @@ class Api:
             limits=d.limits, state=d.state, error=d.error,
             seq=new_seq, samples=data, sequencer=self._seq.status,
             recording=dict(on=bool(rec), path=rec.path if rec else "", rows=rec.rows if rec else 0),
+            meter=d.meter.status(), poll_hz=d.poll_hz,
         )
+
+    # ---- power meter ----------------------------------------------------
+    def meter_enable(self, on):
+        self._dev.meter.set_enabled(on)
+        return self._dev.meter.status()
+
+    def meter_reset(self):
+        self._dev.meter.reset()
+        return self._dev.meter.status()
 
     # ---- console --------------------------------------------------------
     def scpi(self, cmd):

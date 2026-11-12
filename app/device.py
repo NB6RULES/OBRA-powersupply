@@ -515,14 +515,19 @@ class Device:
 
 
 class Recorder:
-    def __init__(self, path, t0=0.0):
+    def __init__(self, path, t0=0.0, every=0.0):
         self.path = path
         self.t0 = t0
+        self.every = every      # seconds between saved rows (0 = every reading)
+        self._last = -1e9
         self.f = open(path, "w", encoding="utf-8", newline="")
         self.f.write("timestamp,time_s,voltage_V,current_A,power_W,set_V,set_A\n")
         self.rows = 0
 
     def write(self, row):
+        if row[0] - self._last < self.every:
+            return
+        self._last = row[0]
         try:
             ts = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(self.t0 + row[0]))
             ms = int(((self.t0 + row[0]) % 1) * 1000)

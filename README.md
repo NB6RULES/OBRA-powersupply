@@ -47,6 +47,11 @@ A cleaner control app for the **Multicomp Pro MP711127 / MP711128 / MP711129 / M
   - Typical 12 V lead-acid: charges to 14.4 V, then holds 13.65 V. Custom mode lets you type your own voltages, e.g. a plain 13.8 V maintainer.
   - Safety stops (output off): battery reads the wrong voltage for what you picked, no current flowing (no battery / loose clip), voltage above target, the supply tripping, lost comms, and a time limit.
   - Live chart of the charge, Ah put in, elapsed time and an event log. Esc still stops everything.
+- **Saved logs** tab: browse everything you've recorded, newest first, grouped by day, with search.
+  - Click a log to see its chart (zoom by dragging) and totals: duration, peak voltage/current/power (and when they happened), average current, charge delivered (Ah), energy (Wh).
+  - **Every battery charge is saved automatically** (one reading per second) with its result, e.g. "✓ Charged" or "Stopped: fault", so you can look back at how a charge went.
+  - Rename a log, save its chart as an image, show the file, or delete it. **Open other CSV…** views any CSV with time / voltage / current columns.
+  - Long logs open quickly: totals come from every reading, and the chart is thinned so short spikes still show.
 - **SCPI console** with command history.
 - **Built-in driver install**:
   - The top bar shows the CH340 driver status.
@@ -99,6 +104,7 @@ If `drivers\` is empty, the Install driver button opens WCH's official download 
 
 - Waveforms are timed by the PC, not by the supply. The SPE series has no list mode over SCPI. Steps under 50 ms get stretched to 50 ms. For dense lookup tables, use "Resample to 0.1 s".
 - Close the Multicomp software first. Only one program can hold the COM port at a time.
+- Logs live in `Documents\\PSU Studio\\logs`. Friendly names and charge results are kept in `index.json` in that folder.
 - The version and build number are shown next to the app name in the top bar (click it to check for updates) and in the .exe's Properties → Details.
 - The app icon lives in `app/assets/`. To change it, edit `tools/make_icon.py` and run `python tools/make_icon.py app/assets`, then copy `favicon.png` into `app/web/`.
 - Settings and the last waveform are saved to `Documents\PSU Studio\settings.json`.

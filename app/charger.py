@@ -203,6 +203,7 @@ class Charger:
         self.stop_evt = threading.Event()
         self.lock = threading.Lock()
         self.plan = None
+        self.on_end = None      # called with the final status when a charge finishes
         self._idle()
 
     def _idle(self):
@@ -464,3 +465,8 @@ class Charger:
             st["elapsed"] = time.time() - st["started"]
             self._event(end_msg)
             st["running"] = False
+            if self.on_end:
+                try:
+                    self.on_end(st)
+                except Exception:
+                    pass

@@ -23,12 +23,14 @@ import charger as chg_mod  # noqa: E402
 import device as dev_mod  # noqa: E402
 import driver  # noqa: E402
 import importers  # noqa: E402
+import logs as logs_mod  # noqa: E402
 import updater  # noqa: E402
 
 WEB = os.path.join(HERE, "web")
 DOCS = os.path.join(os.path.expanduser("~"), "Documents", "PSU Studio")
 SETTINGS = os.path.join(DOCS, "settings.json")
-VERSION = "1.1.0"
+LOGS = os.path.join(DOCS, "logs")
+VERSION = "1.2.0"
 
 
 class Api:
@@ -36,6 +38,8 @@ class Api:
         self._dev = dev_mod.Device()
         self._seq = dev_mod.Sequencer(self._dev)
         self._chg = chg_mod.Charger(self._dev)
+        self._chg.on_end = self._charge_ended
+        self._chg_log = None      # path of the log a charge opened for itself
         self._sim = sim
         self._upd = updater.Updater()
         self._window = None
@@ -154,6 +158,99 @@ class Api:
         self._seq.stop()
         try:
             self._chg.start(cfg or {})
+        except Exception as e:
+            return dict(ok=False, msg=str(e))
+        # every charge is saved to the logs folder (once a second), unless you're already recording
+        plan = self._chg.plan
+        if not self._dev.recorder:
+            try:
+                os.makedirs(LOGS, exist_ok=True)
+                name = f"charge_{logs_mod.stamp_now()}_{logs_mod.safe_name(plan['label'])}.csv"
+                path = os.path.join(LOGS, name)
+                self._dev.recorder = dev_mod.Recorder(path, self._dev.t0, every=1.0)
+                self._chg_log = path
+            except OSError:
+                self._chg_log = None
+        target = self._chg_log or (self._dev.recorder.path if self._dev.recorder else None)
+        if target and os.path.dirname(os.path.abspath(target)) == os.path.abspath(LOGS):
+            desc = plan["label"] + (f", {plan['cap']:g} Ah, {plan['mode']}" if plan.get("cap") else "")
+            logs_mod.update_index(LOGS, os.path.basename(target), kind="charge",
+                                  title=f"Charge: {desc}", result="running", msg="")
+        self._chg_target = target
+        return dict(ok=True, log=os.path.basename(target) if target else "")
+
+    def _charge_ended(self, st):
+        if self._chg_log and self._dev.recorder and self._dev.recorder.path == self._chg_log:
+            rec, self._dev.recorder = self._dev.recorder, None
+            rec.close()
+        self._chg_log = None
+        t = getattr(self, "_chg_target", None)
+        if t and os.path.dirname(os.path.abspath(t)) == os.path.abspath(LOGS):
+            logs_mod.update_index(LOGS, os.path.basename(t), result=st.get("kind"), msg=st.get("msg"))
+
+    # ---- saved logs -----------------------------------------------------
+    def logs_list(self):
+        rec = self._dev.recorder
+        return dict(ok=True, folder=LOGS, logs=logs_mod.list_logs(LOGS, rec.path if rec else ""))
+
+    def _log_path(self, name):
+        name = os.path.basename(str(name or ""))
+        path = os.path.join(LOGS, name)
+        if not name.lower().endswith(".csv") or not os.path.isfile(path):
+            raise ValueError("That log isn't there any more.")
+        return path
+
+    def log_load(self, name):
+        try:
+            if self._dev.recorder:
+                self._dev.recorder.f.flush()
+            out = logs_mod.load_file(self._log_path(name))
+            info = logs_mod.read_index(LOGS).get(os.path.basename(name), {})
+            out.update(title=info.get("title"), result=info.get("result"), msg=info.get("msg"))
+            return dict(ok=True, **out)
+        except Exception as e:
+            return dict(ok=False, msg=f"Couldn't open the log: {e}")
+
+    def log_load_text(self, name, text):
+        """A CSV picked from anywhere (browser mode sends the text)."""
+        try:
+            return dict(ok=True, external=True, **logs_mod.parse(text, os.path.basename(name)))
+        except Exception as e:
+            return dict(ok=False, msg=f"Couldn't read {name}: {e}")
+
+    def log_pick(self):
+        """Desktop: pick any CSV with the Windows open dialog."""
+        if self._window is None:
+            return dict(ok=False, msg="browser")
+        import webview
+        res = self._window.create_file_dialog(webview.OPEN_DIALOG, directory=LOGS if os.path.isdir(LOGS) else DOCS,
+                                              file_types=("CSV files (*.csv)", "All files (*.*)"))
+        if not res:
+            return dict(ok=False, msg="cancelled")
+        path = res if isinstance(res, str) else res[0]
+        try:
+            out = logs_mod.load_file(path)
+            ext = os.path.dirname(os.path.abspath(path)) != os.path.abspath(LOGS)
+            return dict(ok=True, external=ext, path=path, **out)
+        except Exception as e:
+            return dict(ok=False, msg=f"Couldn't read {os.path.basename(path)}: {e}")
+
+    def log_delete(self, name):
+        try:
+            path = self._log_path(name)
+            rec = self._dev.recorder
+            if rec and os.path.abspath(rec.path) == os.path.abspath(path):
+                return dict(ok=False, msg="That log is still being recorded. Stop it first.")
+            os.remove(path)
+            logs_mod.drop_from_index(LOGS, os.path.basename(path))
+            return dict(ok=True)
+        except Exception as e:
+            return dict(ok=False, msg=str(e))
+
+    def log_rename(self, name, title):
+        try:
+            path = self._log_path(name)
+            logs_mod.update_index(LOGS, os.path.basename(path), title=str(title).strip()[:80] or None)
             return dict(ok=True)
         except Exception as e:
             return dict(ok=False, msg=str(e))
@@ -264,8 +361,8 @@ class Api:
     def start_record(self):
         if self._dev.recorder:
             return dict(ok=True, path=self._dev.recorder.path)
-        os.makedirs(os.path.join(DOCS, "logs"), exist_ok=True)
-        path = os.path.join(DOCS, "logs", time.strftime("log_%Y%m%d_%H%M%S.csv"))
+        os.makedirs(LOGS, exist_ok=True)
+        path = os.path.join(LOGS, time.strftime("log_%Y%m%d_%H%M%S.csv"))
         self._dev.recorder = dev_mod.Recorder(path, self._dev.t0)
         return dict(ok=True, path=path)
 

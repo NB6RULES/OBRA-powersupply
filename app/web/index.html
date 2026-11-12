@@ -92,6 +92,7 @@
       <button class="tab on" data-tab="live">Live</button>
       <button class="tab" data-tab="wave">Waveform</button>
       <button class="tab" data-tab="charge">Battery charger</button>
+      <button class="tab" data-tab="logs">Saved logs</button>
       <button class="tab" data-tab="console">SCPI console</button>
       <div class="tab-spacer"></div>
       <div class="seq-mini chg" id="chgMini" hidden><span class="pulse"></span><span id="chgMiniTxt">Charging</span><button class="btn danger small" id="chgMiniStop">Stop</button></div>
@@ -220,6 +221,52 @@
           <div class="chg-foot">
             <ol class="chg-log" id="chgLog"></ol>
             <button type="button" class="btn danger" id="chgStop" disabled>■ Stop charging</button>
+          </div>
+        </section>
+      </div>
+    </div>
+
+    <!-- SAVED LOGS -->
+    <div class="pane" id="pane-logs">
+      <div class="logs-body">
+        <aside class="logs-side">
+          <div class="logs-head">
+            <input class="logs-search" id="logsSearch" type="search" placeholder="Search logs">
+            <button type="button" class="btn icon small" id="logsRefresh" title="Refresh the list">↻</button>
+          </div>
+          <div class="logs-list" id="logsList"></div>
+          <div class="logs-foot">
+            <button type="button" class="btn small" id="logsOpen">Open other CSV…</button>
+            <button type="button" class="btn small ghost" id="logsFolder">Open folder</button>
+          </div>
+          <input type="file" id="logsFile" accept=".csv,text/csv" hidden>
+        </aside>
+        <section class="logs-view">
+          <div class="logs-empty" id="logsEmpty">
+            <b>No log open</b>
+            <span id="logsEmptyTxt">Pick a log on the left.</span>
+          </div>
+          <div class="logs-detail" id="logsDetail" hidden>
+            <div class="lv-head">
+              <div class="lv-titles">
+                <div class="lv-title-row">
+                  <h3 id="lvTitle"></h3>
+                  <input id="lvTitleIn" maxlength="80" hidden>
+                  <button type="button" class="btn icon small ghost" id="lvRename" title="Rename">✎</button>
+                </div>
+                <div class="lv-sub" id="lvSub"></div>
+              </div>
+              <div class="lv-actions">
+                <button type="button" class="btn small" id="lvReload" title="Load the latest readings">↻ Reload</button>
+                <button type="button" class="btn small" id="lvJpeg">Save image</button>
+                <button type="button" class="btn small" id="lvShow">Show file</button>
+                <button type="button" class="btn small danger" id="lvDelete">Delete</button>
+              </div>
+            </div>
+            <div class="chg-msg" id="lvResult" hidden></div>
+            <div class="lv-stats" id="lvStats"></div>
+            <div class="chart" id="logChart"></div>
+            <div class="lv-hint">Drag across the chart to zoom, double-click to zoom back out. Click a name in the legend to hide that line.</div>
           </div>
         </section>
       </div>

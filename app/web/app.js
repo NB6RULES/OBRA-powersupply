@@ -60,7 +60,9 @@ const axis = (o = {}, k = 1) => Object.assign({
   stroke: "#6b7583", grid: { stroke: "#1b2129", width: 1 }, ticks: { stroke: "#1b2129", size: 6 * k },
   font: `${Math.round(11 * k)}px ` + css.getPropertyValue("--mono"), size: 50 * k, gap: 5 * k,
 }, o);
-const vAxes = k => [axis({ space: 60 * k, values: (u, v) => v.map(x => fmtTime(x)) }, k), axis({ space: 32 * k, scale: "V", values: (u, v) => v.map(x => x + " V") }, k),
+// tick steps that read well as clock time: 0.1 s … 30 s, 1/2/5/10/15/30 min, 1/2/3/6/12/24 h
+const T_INCRS = [0.1, 0.2, 0.5, 1, 2, 5, 10, 15, 30, 60, 120, 300, 600, 900, 1800, 3600, 7200, 10800, 21600, 43200, 86400];
+const vAxes = k => [axis({ space: 60 * k, incrs: T_INCRS, values: (u, v) => v.map(x => fmtTime(x)) }, k), axis({ space: 32 * k, scale: "V", values: (u, v) => v.map(x => x + " V") }, k),
   axis({ space: 32 * k, scale: "A", side: 1, size: 62 * k, grid: { show: false }, values: (u, v) => v.map(x => x + " A") }, k)];
 
 function sized(el) { const r = el.getBoundingClientRect(); return { width: Math.max(200, r.width - 12), height: Math.max(140, r.height - 40) }; }
@@ -113,6 +115,7 @@ function makeLive() {
 function fmtTime(s) {
   if (s == null) return "";
   if (s < 120) return (+s.toFixed(1)) + "s";
+  if (s >= 3600) { const h = Math.floor(s / 3600), m = Math.floor(s % 3600 / 60), r = Math.round(s % 60); return `${h}:${pad2(m)}:${pad2(r)}`; }
   const m = Math.floor(s / 60), r = Math.round(s % 60);
   return m + ":" + String(r).padStart(2, "0");
 }
@@ -148,7 +151,7 @@ function cursorLinePlugin() {
   }] } };
 }
 const ro = new ResizeObserver(() => {
-  [[liveChart, "#liveChart"], [waveChart, "#waveChart"], [CH.chart, "#chgChart"]].forEach(([c, s]) => { if (c && $(s).offsetParent) c.setSize(sized($(s))); });
+  [[liveChart, "#liveChart"], [waveChart, "#waveChart"], [CH.chart, "#chgChart"], [LG.chart, "#logChart"]].forEach(([c, s]) => { if (c && $(s).offsetParent) c.setSize(sized($(s))); });
 });
 
 // ---------------------------------------------------------------- live data
@@ -751,6 +754,7 @@ function showTab(name) {
     if (name === "live") { liveChart.setSize(sized($("#liveChart"))); drawLive(); }
     if (name === "wave") waveChart.setSize(sized($("#waveChart")));
     if (name === "console") { renderConsole(); $("#consoleCmd").focus(); }
+    if (name === "logs") { refreshLogs(); if (LG.cur) LG.chart.setSize(sized($("#logChart"))); }
     if (name === "charge" && CH.chart) { CH.chart.setSize(sized($("#chgChart"))); drawChargeChart(true); }
   });
 }
@@ -780,7 +784,7 @@ async function chartJpeg(u, kind, title, sub) {
   const host = document.createElement("div");
   host.style.cssText = `position:fixed;left:-20000px;top:0;width:${W * k}px`;
   document.body.append(host);
-  const opts = kind === "live" ? liveOpts(k) : stepOpts(k);
+  const opts = kind === "live" ? liveOpts(k) : kind === "log" ? logOpts(k) : stepOpts(k);
   opts.legend = { show: false };
   opts.scales.x = { time: false, range: () => [u.scales.x.min, u.scales.x.max] };  // keep the current zoom/window
   const big = new uPlot({ width: W * k, height: H * k, ...opts }, u.data, host);
@@ -866,7 +870,7 @@ function bindMisc() {
   $("#recBtn").addEventListener("click", async () => {
     if ($("#recBtn").classList.contains("on")) {
       const r = await api.stop_record();
-      if (r.path) toast(`Saved ${r.rows} rows to ${r.path}`, "", 6000, { label: "Open folder", fn: () => api.open_folder(r.path) });
+      if (r.path) toast(`Saved ${r.rows} readings to ${r.path.split(/[\\/]/).pop()}`, "", 7000, { label: "View", fn: () => openLog(r.path.split(/[\\/]/).pop()) });
     } else {
       if (!S.connected) { toast("Connect first", "err"); return; }
       const r = await api.start_record(); toast("Recording to " + r.path, "", 4000);
@@ -1045,7 +1049,7 @@ function renderCharger(st) {
   }
   if (was && !running) {
     S.chgEndedAt = Date.now();
-    toast("Battery charger: " + st.msg, st.kind === "fault" ? "err" : "", 10000);
+    toast("Battery charger: " + st.msg, st.kind === "fault" ? "err" : "", 10000, CH.logName ? { label: "View log", fn: () => openLog(CH.logName) } : undefined);
   }
   drawChargeChart();
 }
@@ -1094,6 +1098,7 @@ function bindCharger() {
     $("#chgStart").disabled = true;
     const r = await api.charge_start(CH.cfg);
     if (!r.ok) { toast(r.msg, "err", 9000); updateChargeBtn(); return; }
+    CH.logName = r.log || "";
     S.userOff = false;
   });
   const stop = async () => { S.userOff = true; await api.charge_stop(); };
@@ -1107,6 +1112,192 @@ async function initCharger() {
   if (saved && typeof saved === "object") CH.cfg = { ...CH.cfg, ...saved, custom: { ...CH.cfg.custom, ...(saved.custom || {}) } };
   renderChargerForm();
   renderSteps(CH.status);
+}
+
+// ---------------------------------------------------------------- saved logs
+const LG = { list: [], folder: "", cur: null, chart: null, q: "", timer: null };
+const fmtSize = b => b < 1024 ? b + " B" : b < 1048576 ? Math.round(b / 1024) + " KB" : fmt(b / 1048576, 1) + " MB";
+const fmtAh = a => a < 1 ? fmt(a * 1000, 0) + " mAh" : fmt(a, 2) + " Ah";
+const fmtWh = w => w < 1 ? fmt(w * 1000, 0) + " mWh" : fmt(w, 2) + " Wh";
+function dayLabel(sec) {
+  const d = new Date(sec * 1000), t = new Date(); t.setHours(0, 0, 0, 0);
+  const diff = Math.round((t - new Date(d.getFullYear(), d.getMonth(), d.getDate())) / 86400000);
+  if (diff === 0) return "Today";
+  if (diff === 1) return "Yesterday";
+  return d.toLocaleDateString(undefined, { weekday: "short", day: "numeric", month: "short", year: d.getFullYear() === t.getFullYear() ? undefined : "numeric" });
+}
+function logBadge(x) {
+  if (x.recording) return `<span class="badge live">● Recording</span>`;
+  if (x.kind !== "charge") return "";
+  return { ok: `<span class="badge ok">✓ Charged</span>`, fault: `<span class="badge fault">! Stopped: fault</span>`,
+    stopped: `<span class="badge">■ Stopped</span>`, running: `<span class="badge live">● Charging</span>` }[x.result] || `<span class="badge">Charge</span>`;
+}
+async function refreshLogs() {
+  const r = await api.logs_list();
+  if (!r.ok) return;
+  LG.list = r.logs; LG.folder = r.folder;
+  renderLogList();
+}
+function renderLogList() {
+  const q = LG.q.trim().toLowerCase();
+  const rows = LG.list.filter(x => !q || (x.title + " " + x.name).toLowerCase().includes(q));
+  const box = $("#logsList");
+  if (!LG.list.length) {
+    box.innerHTML = `<div class="logs-none">No saved logs yet.<br><br>Press <b>Record</b> in the top bar to save readings, or charge a battery: every charge is saved here automatically.</div>`;
+  } else if (!rows.length) {
+    box.innerHTML = `<div class="logs-none">Nothing matches “${esc(LG.q)}”.</div>`;
+  } else {
+    let day = "", html = "";
+    for (const x of rows) {
+      const dl = dayLabel(x.mtime);
+      if (dl !== day) { day = dl; html += `<div class="logs-day">${esc(dl)}</div>`; }
+      const when = x.started ? x.started.slice(11, 16) : clock(x.mtime).slice(0, 5);
+      const on = LG.cur && !LG.cur.external && LG.cur.name === x.name ? " on" : "";
+      html += `<button type="button" class="log-item${on}" data-name="${esc(x.name)}" title="${esc(x.name)}">
+        <b>${esc(x.title)}</b>${logBadge(x)}
+        <span class="meta">${when} · ${x.duration != null ? fmtDur(x.duration) : "—"} · ${fmtSize(x.size)}</span></button>`;
+    }
+    box.innerHTML = html;
+  }
+  $("#logsEmptyTxt").textContent = LG.list.length ? "Pick a log on the left to see its chart and totals." : "Saved logs will show up on the left.";
+}
+function logOpts(k = 1) {
+  const o = liveOpts(k);
+  o.plugins = [logPeakPlugin(k)];
+  o.series.slice(1).forEach(s => { s.points = { show: false }; });
+  return o;
+}
+function logPeakPlugin(k = 1) {
+  return { hooks: { draw: [u => {
+    const st = LG.cur && LG.cur.stats;
+    if (!st || !(st.p_max > 0) || !u.series[3].show) return;
+    const x = u.valToPos(st.p_max_t, "x", true), y = u.valToPos(st.p_max, "W", true);
+    if (!isFinite(x) || !isFinite(y) || st.p_max_t < u.scales.x.min || st.p_max_t > u.scales.x.max) return;
+    const g = u.ctx, r = (window.devicePixelRatio || 1);
+    g.save();
+    g.fillStyle = C.p; g.strokeStyle = "#0e1216"; g.lineWidth = 2 * r;
+    g.beginPath(); g.arc(x, y, 4.5 * r * k, 0, Math.PI * 2); g.fill(); g.stroke();
+    const label = `Peak ${fmtW(st.p_max)} W`;
+    g.font = `600 ${Math.round(11 * k * r)}px ` + css.getPropertyValue("--mono");
+    const w = g.measureText(label).width + 10 * r * k, h = 18 * r * k;
+    let lx = x + 9 * r * k; if (lx + w > u.bbox.left + u.bbox.width) lx = x - 9 * r * k - w;
+    const ly = Math.max(u.bbox.top, y - h - 6 * r * k);
+    g.fillStyle = "rgba(20,14,30,.92)"; g.strokeStyle = C.p; g.lineWidth = r;
+    g.beginPath(); g.roundRect ? g.roundRect(lx, ly, w, h, 4 * r) : g.rect(lx, ly, w, h); g.fill(); g.stroke();
+    g.fillStyle = "#ead9ff"; g.textBaseline = "middle"; g.fillText(label, lx + 5 * r * k, ly + h / 2);
+    g.restore();
+  }] } };
+}
+function makeLogChart() {
+  const el = $("#logChart");
+  LG.chart = new uPlot({ ...sized(el), ...logOpts() }, [[], [], [], []], el);
+  ro.observe(el);
+}
+async function openLog(name) {
+  showTab("logs");
+  const seq = (LG.seq = (LG.seq || 0) + 1);
+  const item = $$("#logsList [data-name]").find(b => b.dataset.name === name);
+  if (item) item.querySelector(".meta").textContent = "Opening…";
+  document.body.style.cursor = "progress";
+  const r = await api.log_load(name);
+  document.body.style.cursor = "";
+  if (seq !== LG.seq) return;           // a newer click won
+  if (!r.ok) { toast(r.msg, "err", 6000); refreshLogs(); return; }
+  showLog(r);
+}
+function showLog(d) {
+  LG.cur = d;
+  const s = d.stats, meta = LG.list.find(x => x.name === d.name && !d.external) || {};
+  $("#logsEmpty").hidden = true; $("#logsDetail").hidden = false;
+  $("#lvTitle").textContent = d.title || meta.title || d.name;
+  $("#lvTitle").hidden = false; $("#lvTitleIn").hidden = true;
+  $("#lvRename").hidden = !!d.external; $("#lvDelete").hidden = !!d.external;
+  $("#lvReload").hidden = !!d.external; $("#lvShow").hidden = !isDesktop() || (d.external && !d.path);
+  const when = s.started ? s.started.slice(0, 19) : "";
+  $("#lvSub").textContent = [when, d.external ? (d.path || d.name) : d.name,
+    `${s.rows.toLocaleString()} readings${s.rate ? ` (${s.rate >= 1 ? fmt(s.rate, 1) + " per second" : "one every " + fmt(1 / s.rate, 0) + " s"})` : ""}`].filter(Boolean).join("  ·  ");
+  const res = $("#lvResult");
+  const result = d.result || meta.result;
+  if (result && result !== "running") {
+    res.hidden = false;
+    res.className = "chg-msg " + (result === "ok" ? "ok" : result === "fault" ? "fault" : "");
+    res.textContent = d.msg || meta.msg || "";
+    res.hidden = !res.textContent;
+  } else if (meta.recording || result === "running") {
+    res.hidden = false; res.className = "chg-msg run";
+    res.textContent = "Still being recorded. Press Reload to see the latest readings.";
+  } else res.hidden = true;
+  const tile = (label, val, sub, cls = "") => `<div><span>${label}</span><b class="${cls}">${val}</b>${sub ? `<em title="${esc(sub)}">${sub}</em>` : ""}</div>`;
+  $("#lvStats").innerHTML = [
+    tile("Duration", fmtDur(s.duration), s.on_s && s.on_s < s.duration * 0.98 ? `current flowing ${fmtDur(s.on_s)}` : ""),
+    tile("Peak voltage", fmt(s.v_max, 3) + " V", `at ${fmtTime(s.v_max_t)} · ended ${fmt(s.v_end, 2)} V`, "cv"),
+    tile("Peak current", fmt(s.i_max, 3) + " A", `at ${fmtTime(s.i_max_t)} · avg ${fmt(s.i_avg, 3)} A`, "ci"),
+    tile("Peak power", fmtW(s.p_max) + " W", `at ${fmtTime(s.p_max_t)}`, "cp"),
+    tile("Charge delivered", fmtAh(s.ah), "current × time", "ci"),
+    tile("Energy", fmtWh(s.wh), "power × time", "cp"),
+    tile("Lowest voltage", fmt(s.v_min, 3) + " V", "", "cv"),
+    tile("Readings", s.rows.toLocaleString(), d.t.length < s.rows ? `chart shows ${d.t.length.toLocaleString()}` : ""),
+  ].join("");
+  requestAnimationFrame(() => {
+    LG.chart.setSize(sized($("#logChart")));
+    LG.chart.setData([d.t, d.v, d.i, d.p]);
+  });
+  renderLogList();
+}
+function bindLogs() {
+  $("#logsList").addEventListener("click", e => {
+    const b = e.target.closest("[data-name]"); if (b) openLog(b.dataset.name);
+  });
+  $("#logsSearch").addEventListener("input", e => { LG.q = e.target.value; renderLogList(); });
+  $("#logsRefresh").addEventListener("click", refreshLogs);
+  $("#logsFolder").addEventListener("click", () => api.open_folder(LG.folder || undefined));
+  $("#logsOpen").addEventListener("click", async () => {
+    if (isDesktop()) {
+      const r = await api.log_pick();
+      if (r.ok) { showLog(r); return; }
+      if (r.msg !== "browser") { if (r.msg !== "cancelled") toast(r.msg, "err", 6000); return; }
+    }
+    $("#logsFile").click();
+  });
+  $("#logsFile").addEventListener("change", async e => {
+    const f = e.target.files[0]; e.target.value = ""; if (!f) return;
+    const r = await api.log_load_text(f.name, await f.text());
+    if (r.ok) showLog(r); else toast(r.msg, "err", 6000);
+  });
+  $("#lvReload").addEventListener("click", () => LG.cur && openLog(LG.cur.name));
+  $("#lvShow").addEventListener("click", () => LG.cur && api.open_folder(LG.cur.path || (LG.folder + "/" + LG.cur.name)));
+  $("#lvJpeg").addEventListener("click", () => {
+    const d = LG.cur; if (!d) return;
+    const s = d.stats;
+    saveJpeg(LG.chart, "log", $("#lvTitle").textContent,
+      `${s.started ? s.started.slice(0, 19) + "  ·  " : ""}${fmtDur(s.duration)}  ·  peak ${fmt(s.v_max, 2)} V / ${fmt(s.i_max, 3)} A / ${fmtW(s.p_max)} W  ·  ${fmtAh(s.ah)}  ·  ${fmtWh(s.wh)}`,
+      d.name.replace(/\.csv$/i, "") + ".jpg");
+  });
+  $("#lvDelete").addEventListener("click", async () => {
+    const d = LG.cur; if (!d) return;
+    if (!confirm(`Delete this log?\n\n${$("#lvTitle").textContent}\n${d.name}\n\nThis can't be undone.`)) return;
+    const r = await api.log_delete(d.name);
+    if (!r.ok) { toast(r.msg, "err", 6000); return; }
+    LG.cur = null; $("#logsDetail").hidden = true; $("#logsEmpty").hidden = false;
+    toast("Log deleted"); refreshLogs();
+  });
+  const startRename = () => {
+    const i = $("#lvTitleIn"); i.value = $("#lvTitle").textContent;
+    $("#lvTitle").hidden = true; i.hidden = false; i.focus(); i.select();
+  };
+  const finishRename = async save => {
+    const i = $("#lvTitleIn"); if (i.hidden) return;
+    i.hidden = true; $("#lvTitle").hidden = false;
+    const v = i.value.trim();
+    if (!save || !v || !LG.cur || v === $("#lvTitle").textContent) return;
+    const r = await api.log_rename(LG.cur.name, v);
+    if (!r.ok) { toast(r.msg, "err"); return; }
+    $("#lvTitle").textContent = v; LG.cur.title = v; refreshLogs();
+  };
+  $("#lvRename").addEventListener("click", startRename);
+  $("#lvTitle").addEventListener("dblclick", () => { if (!LG.cur?.external) startRename(); });
+  $("#lvTitleIn").addEventListener("keydown", e => { if (e.key === "Enter") finishRename(true); if (e.key === "Escape") { e.stopPropagation(); finishRename(false); } });
+  $("#lvTitleIn").addEventListener("blur", () => finishRename(true));
 }
 
 // ---------------------------------------------------------------- updates
@@ -1178,7 +1369,7 @@ async function boot() {
   makeLive();
   waveChart = makeStepChart($("#waveChart"));
   ro.observe($("#liveChart")); ro.observe($("#waveChart"));
-  makeChargeChart();
+  makeChargeChart(); makeLogChart(); bindLogs();
   bindSetpoints(); bindPresets(); bindTable(); bindRun(); bindMapper(); bindGen(); bindConsole(); bindMisc(); bindUpdates(); bindMeter(); bindCharger();
 
   S.settings = (await api.load_settings()) || {};

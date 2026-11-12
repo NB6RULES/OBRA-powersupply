@@ -47,6 +47,7 @@ function saveSettings() {
     S.settings.run = { loops: $("#loops").value, outOn: $("#outOn").checked, outOff: $("#outOff").checked };
     S.settings.autoConn = $("#autoConn").checked;
     S.settings.lastPort = $("#portSel").value;
+    S.settings.charger = CH.cfg;
     api.save_settings(S.settings);
   }, 400);
 }
@@ -147,7 +148,7 @@ function cursorLinePlugin() {
   }] } };
 }
 const ro = new ResizeObserver(() => {
-  [[liveChart, "#liveChart"], [waveChart, "#waveChart"]].forEach(([c, s]) => { if (c && $(s).offsetParent) c.setSize(sized($(s))); });
+  [[liveChart, "#liveChart"], [waveChart, "#waveChart"], [CH.chart, "#chgChart"]].forEach(([c, s]) => { if (c && $(s).offsetParent) c.setSize(sized($(s))); });
 });
 
 // ---------------------------------------------------------------- live data
@@ -207,6 +208,7 @@ async function poll() {
     } else { renderSeq(r.sequencer); if (wasConnected) onDisconnected(); }
     renderRec(r.recording);
     renderMeter(r);
+    if (r.charger) renderCharger(r.charger);
     $("#statusTxt").textContent = r.error || (r.connected ? `${r.port} · ${shortIdn(r.idn)}` : "Not connected");
     $("#statusTxt").style.color = r.error ? "var(--bad)" : "";
   } catch (e) { /* bridge not ready yet */ }
@@ -224,7 +226,7 @@ function renderReadouts(r) {
   const ob = $("#outBtn"); ob.classList.toggle("on", !!on); $("#outTxt").textContent = on ? "OUTPUT ON" : "OUTPUT OFF";
   ob.disabled = false;
   // detect protection trip: output went off while mode was active and readings near the limit
-  if (lastMode && lastMode !== "OFF" && !on && !S.seqStatus.running && S.userOff !== true && Date.now() - (S.seqEndedAt || 0) > 3000) {
+  if (lastMode && lastMode !== "OFF" && !on && !S.seqStatus.running && !CH.status.running && S.userOff !== true && Date.now() - (S.seqEndedAt || 0) > 3000 && Date.now() - (S.chgEndedAt || 0) > 3000) {
     $("#tripBadge").hidden = false; $("#tripBadge").textContent = "OUTPUT TRIPPED";
     toast("Output switched off by the supply - check OVP/OCP/OTP.", "err", 6000);
   }
@@ -245,6 +247,7 @@ function onConnected(r) {
   if (![...sel.options].some(o => o.value === r.port)) sel.insertAdjacentHTML("beforeend", `<option value="${r.port}">${r.port}</option>`);
   sel.value = r.port;
   toast("Connected: " + shortIdn(r.idn));
+  planCharge();
 }
 function onDisconnected() {
   $("#connectBtn").textContent = "Connect"; $("#connectBtn").classList.add("primary");
@@ -341,7 +344,7 @@ function bindSetpoints() {
   });
   document.addEventListener("keydown", async e => {
     if (e.key === "Escape" && S.connected && !document.querySelector("dialog[open]")) {
-      S.userOff = true; await api.seq_stop(); await api.set_output(false); toast("Output OFF");
+      S.userOff = true; await api.seq_stop(); await api.charge_stop(); await api.set_output(false); toast("Output OFF");
     }
   });
 }
@@ -748,6 +751,7 @@ function showTab(name) {
     if (name === "live") { liveChart.setSize(sized($("#liveChart"))); drawLive(); }
     if (name === "wave") waveChart.setSize(sized($("#waveChart")));
     if (name === "console") { renderConsole(); $("#consoleCmd").focus(); }
+    if (name === "charge" && CH.chart) { CH.chart.setSize(sized($("#chgChart"))); drawChargeChart(true); }
   });
 }
 async function saveText(name, text) {
@@ -916,14 +920,205 @@ function bindMeter() {
   $("#pmReset").addEventListener("click", async () => { lastPeakCount = 0; await api.meter_reset(); toast("Power meter reset"); liveChart.redraw(false); });
 }
 
+// ---------------------------------------------------------------- battery charger
+const CH = {
+  opts: [], plan: null, planErr: "", status: { running: false, stage: "idle", events: [] }, chart: null,
+  cfg: { chem: "lead", cells: 6, cap: "", mode: "normal", hold: true, i_override: "",
+         custom: { v_charge: 13.8, v_hold: 13.8, i: 1, i_term: "" } },
+};
+const fmtH = h => h == null ? "" : h < 1 ? `${Math.max(1, Math.round(h * 60))} min` : `${h < 10 ? (Math.round(h * 2) / 2) : Math.round(h)} h`;
+const chemOpt = () => CH.opts.find(o => o.key === CH.cfg.chem);
+
+function renderChargerForm() {
+  const c = CH.cfg, o = chemOpt() || CH.opts[0];
+  if (!o) return;
+  $("#chgChem").innerHTML = CH.opts.map(x => `<button type="button" class="pick ${x.key === c.chem ? "on" : ""}" data-chem="${x.key}"><b>${esc(x.short)}</b><span>${esc(x.name.replace(/^[^(]*\(?/, "").replace(/\)$/, "") || x.name)}</span></button>`).join("");
+  const custom = c.chem === "custom";
+  $("#chgSize").hidden = custom; $("#chgCustom").hidden = !custom;
+  $("#chgSizeHint").textContent = custom ? "your own charge voltages" : "as written on the battery";
+  if (!custom) {
+    if (!o.sizes.some(z => z.cells === c.cells)) c.cells = (o.sizes.find(z => /12/.test(z.label)) || o.sizes[0]).cells;
+    $("#chgSize").innerHTML = o.sizes.map(z => `<button type="button" class="pick ${z.cells === c.cells ? "on" : ""}" data-cells="${z.cells}" title="Charges to ${z.v_charge} V${z.v_float ? ", holds " + z.v_float + " V" : ""}"><b>${esc(z.label)}</b><span>${esc(z.hint)}</span></button>`).join("");
+  } else {
+    $("#cuV").value = c.custom.v_charge; $("#cuHold").value = c.custom.v_hold; $("#cuI").value = c.custom.i; $("#cuTerm").value = c.custom.i_term;
+  }
+  if (document.activeElement !== $("#chgCap")) $("#chgCap").value = c.cap;
+  if (document.activeElement !== $("#chgIOv")) $("#chgIOv").value = c.i_override;
+  $("#chgSpeed").hidden = custom; $("#chgSpeedH").hidden = custom; $("#chgAdv").hidden = custom;
+  $$("#chgSpeed button").forEach(b => b.classList.toggle("on", b.dataset.m === c.mode));
+  const cap = num(c.cap);
+  $("#chgNormalI").textContent = o.rates.normal && cap > 0 ? `${fmt(cap * o.rates.normal, 2)} A` : "gentlest on the battery";
+  $("#chgFastI").textContent = o.rates.fast && cap > 0 ? `${fmt(cap * o.rates.fast, 2)} A` : "quicker, a little more wear";
+  const size = !custom && o.sizes.find(z => z.cells === c.cells);
+  $("#chgHoldRow").hidden = !(size && size.v_float);
+  $("#chgHold").checked = c.hold !== false;
+  if (size && size.v_float) $("#chgHoldTxt").textContent = `When full, keep holding at ${size.v_float} V (safe to leave connected)`;
+  $("#chgCapHint").textContent = custom ? "optional: sets the safety timer" : "2000 mAh = 2 Ah";
+  planCharge();
+}
+let planT;
+function planCharge() {
+  clearTimeout(planT);
+  planT = setTimeout(async () => {
+    const r = await api.charge_plan(CH.cfg);
+    CH.plan = r.ok ? r.plan : null; CH.planErr = r.ok ? "" : r.msg;
+    renderPlan(); saveSettings();
+  }, 120);
+}
+function renderPlan() {
+  const box = $("#chgPlan"), p = CH.plan;
+  box.className = "chg-plan" + (CH.planErr ? " err" : "");
+  if (!p) { box.textContent = CH.planErr || "…"; } else {
+    const pre = p.i_pre ? `Starts gently if it's very flat, then charges ` : "Charges ";
+    const end = p.v_float ? `then holds <span class="pv">${p.v_float} V</span>` : "then switches off";
+    box.innerHTML = `<b>${esc(p.label)}</b>: ${pre}at <span class="pi">${fmt(p.i_charge, 2)} A</span> up to <span class="pv">${p.v_charge} V</span>, ` +
+      `${end} once the current drops below <span class="pi">${fmt(p.i_term, 2)} A</span>.` +
+      (p.est_h ? `<br>About <b>${fmtH(p.est_h)}</b> from flat. Usually less.` : "") +
+      p.notes.map(n => `<div class="note">${esc(n)}</div>`).join("");
+  }
+  updateChargeBtn();
+}
+function updateChargeBtn() {
+  const b = $("#chgStart"), running = CH.status.running;
+  b.disabled = running || !CH.plan || !S.connected;
+  b.textContent = !S.connected ? "Connect the supply to start" : running ? "Charging…" : "Start charging";
+}
+const STEP_NAMES = { pre: "Wake up", bulk: "Bulk", absorb: "Top up", float: "Hold", done: "Done" };
+function renderSteps(st) {
+  const p = st.plan || CH.plan;
+  const order = ["pre", "bulk", "absorb", p && p.v_float ? "float" : "done"].filter(k => k !== "pre" || !p || p.i_pre);
+  let at = order.indexOf(st.stage);
+  if (st.stage === "done" && at < 0) at = order.length - 1;
+  const bad = st.stage === "fault" || st.stage === "stopped";
+  const reached = bad ? order.indexOf(CH.lastStage) : at;
+  $("#chgSteps").innerHTML = order.map((k, n) => {
+    let cls = "";
+    if (st.stage === "idle") cls = "";
+    else if (bad) cls = n < reached ? "done" : n === reached ? "now bad" : "";
+    else if (n < at || (n === at && (st.stage === "done"))) cls = "done";
+    else if (n === at) cls = "now" + (st.running ? " run" : "");
+    const icon = cls.includes("done") ? "✓" : cls.includes("bad") ? (st.stage === "fault" ? "!" : "■") : n + 1;
+    return (n ? `<span class="stp-line ${cls.includes("done") || (n <= at && !bad && st.stage !== "idle") ? "done" : ""}"></span>` : "") +
+      `<span class="stp ${cls}"><i>${icon}</i>${STEP_NAMES[k]}</span>`;
+  }).join("");
+}
+function renderCharger(st) {
+  const was = CH.status.running;
+  if (st.running && ["pre", "bulk", "absorb", "float"].includes(st.stage)) CH.lastStage = st.stage;
+  CH.status = st;
+  const running = st.running;
+  $("#chgForm").disabled = running;
+  $("#chgStop").disabled = !running;
+  $("#chgMini").hidden = !running;
+  updateChargeBtn();
+  renderSteps(st);
+  const p = st.plan;
+  const msg = $("#chgMsg");
+  if (running) {
+    const txt = {
+      pre: `Very flat battery: charging gently at ${fmt(st.target_i, 2)} A until it reaches ${p.v_pre} V.`,
+      bulk: `Charging at ${fmt(st.target_i, 2)} A. Voltage is climbing towards ${p.v_charge} V.`,
+      absorb: `Holding ${p.v_charge} V while the current drops. Full when it's under ${fmt(p.i_term, 2)} A.`,
+      float: `Full. Holding at ${p.v_float} V to keep it topped up. Safe to leave connected; press Stop when you take it off.`,
+    }[st.stage] || "Starting…";
+    msg.className = "chg-msg " + (st.stage === "float" ? "ok" : "run");
+    msg.textContent = txt + (st.sim_speed > 1 ? `  (Simulator: battery time runs ${st.sim_speed}× faster.)` : "");
+    $("#chgMiniTxt").textContent = `${p.label} · ${STEP_NAMES[st.stage] || ""} · ${fmt(st.v, 2)} V ${fmt(st.i, 2)} A`;
+  } else if (st.stage !== "idle") {
+    msg.className = "chg-msg " + (st.kind === "ok" ? "ok" : st.kind === "fault" ? "fault" : "");
+    msg.textContent = st.msg;
+  }
+  const live = running || st.stage !== "idle";
+  $("#chgV").textContent = live ? fmt(running ? st.v : 0, 2) + " V" : "—";
+  $("#chgI").textContent = live ? fmt(running ? st.i : 0, 3) + " A" : "—";
+  $("#chgAh").textContent = live ? (st.ah < 1 ? fmt(st.ah * 1000, 0) + " mAh" : fmt(st.ah, 2) + " Ah") : "—";
+  $("#chgT").textContent = live ? fmtDur(st.elapsed) : "—";
+  if (!running && st.stage !== "idle") { $("#chgV").textContent = "—"; $("#chgI").textContent = "—"; }
+  const pw = $("#chgProgWrap");
+  pw.hidden = !(running && (st.stage === "absorb" || st.stage === "float"));
+  $("#chgProg").style.width = Math.round((st.stage === "float" ? 1 : st.taper || 0) * 100) + "%";
+  const ev = st.events || [];
+  if (ev.length !== CH.evN) {
+    CH.evN = ev.length;
+    $("#chgLog").innerHTML = ev.map(e => `<li><span>${clock(e[0])}</span>${esc(e[1])}</li>`).join("");
+    $("#chgLog").scrollTop = 1e6;
+  }
+  if (was && !running) {
+    S.chgEndedAt = Date.now();
+    toast("Battery charger: " + st.msg, st.kind === "fault" ? "err" : "", 10000);
+  }
+  drawChargeChart();
+}
+let chgChartAt = 0;
+function drawChargeChart(force) {
+  if (!$("#pane-charge").classList.contains("on") || !CH.chart) return;
+  if (!force && Date.now() - chgChartAt < 700) return;
+  chgChartAt = Date.now();
+  const st = CH.status, L = S.live;
+  if (!st.started || st.stage === "idle") { CH.chart.setData([[], [], []]); return; }
+  const from = lowerBound(L.t, st.started - S.t0 - 1);
+  const to = st.running ? L.t.length : lowerBound(L.t, st.started - S.t0 + st.elapsed + 2);
+  CH.chart.setData([L.t.slice(from, to), L.v.slice(from, to), L.i.slice(from, to)]);
+}
+function makeChargeChart() {
+  const el = $("#chgChart");
+  CH.chart = new uPlot({ ...sized(el), cursor: { drag: { x: true, y: false } },
+    scales: { x: { time: false }, V: { range: (u, a, b) => [Math.max(0, Math.floor(a - 1)), Math.max(1, b * 1.05)] }, A: { range: (u, a, b) => [0, Math.max(0.1, b * 1.2)] } },
+    axes: vAxes(1),
+    series: [{ label: "t", value: (u, v) => v == null ? "—" : fmtTime(v) },
+      { label: "Voltage", scale: "V", stroke: C.v, width: 1.6, points: { show: false }, value: (u, v) => fmt(v, 3) + " V" },
+      { label: "Current", scale: "A", stroke: C.i, width: 1.6, points: { show: false }, value: (u, v) => fmt(v, 3) + " A" }],
+  }, [[], [], []], el);
+  ro.observe(el);
+}
+function bindCharger() {
+  $("#chgChem").addEventListener("click", e => {
+    const b = e.target.closest("[data-chem]"); if (!b) return;
+    CH.cfg.chem = b.dataset.chem; renderChargerForm();
+  });
+  $("#chgSize").addEventListener("click", e => {
+    const b = e.target.closest("[data-cells]"); if (!b) return;
+    CH.cfg.cells = +b.dataset.cells; renderChargerForm();
+  });
+  $$("#chgSpeed button").forEach(b => b.addEventListener("click", () => { CH.cfg.mode = b.dataset.m; renderChargerForm(); }));
+  $("#chgCap").addEventListener("input", e => { CH.cfg.cap = e.target.value; renderChargerForm(); });
+  $("#chgIOv").addEventListener("input", e => { CH.cfg.i_override = e.target.value; planCharge(); });
+  $("#chgHold").addEventListener("change", e => { CH.cfg.hold = e.target.checked; planCharge(); });
+  [["#cuV", "v_charge"], ["#cuHold", "v_hold"], ["#cuI", "i"], ["#cuTerm", "i_term"]].forEach(([s, k]) =>
+    $(s).addEventListener("input", e => { CH.cfg.custom[k] = e.target.value; planCharge(); }));
+  $("#chgStart").addEventListener("click", async () => {
+    const p = CH.plan; if (!p) return;
+    if (!confirm(`Start charging: ${p.label}\n\n${fmt(p.i_charge, 2)} A up to ${p.v_charge} V` +
+      (p.v_float ? `, then hold ${p.v_float} V.` : ", then switch off.") +
+      `\n\nCheck the red clip is on + and the black clip is on −.`)) return;
+    $("#chgStart").disabled = true;
+    const r = await api.charge_start(CH.cfg);
+    if (!r.ok) { toast(r.msg, "err", 9000); updateChargeBtn(); return; }
+    S.userOff = false;
+  });
+  const stop = async () => { S.userOff = true; await api.charge_stop(); };
+  $("#chgStop").addEventListener("click", stop);
+  $("#chgMiniStop").addEventListener("click", stop);
+  $("#chgMini").addEventListener("click", e => { if (e.target.tagName !== "BUTTON") showTab("charge"); });
+}
+async function initCharger() {
+  CH.opts = await api.charge_options();
+  const saved = S.settings.charger;
+  if (saved && typeof saved === "object") CH.cfg = { ...CH.cfg, ...saved, custom: { ...CH.cfg.custom, ...(saved.custom || {}) } };
+  renderChargerForm();
+  renderSteps(CH.status);
+}
+
 // ---------------------------------------------------------------- updates
 const RELEASES = "https://github.com/NB6RULES/OBRA-powersupply/releases/latest";
 let updState = null;
 async function checkUpdate(force = false) {
   const st = await api.check_update(force);
   updState = st;
-  $("#verTag").textContent = st.dev ? "dev" : `build ${st.current}`;
-  $("#verTag").title = st.dev ? "Running from source" : `Build ${st.current}${st.sha ? " · " + st.sha : ""}`;
+  const ver = st.version ? "v" + st.version : "";
+  $("#verTag").textContent = [ver, st.dev ? "dev" : `build ${st.current}`].filter(Boolean).join(" · ");
+  $("#verTag").title = (st.dev ? "Running from source" : `Version ${st.version} · build ${st.current}${st.sha ? " · " + st.sha.slice(0, 7) : ""}`) + "\nClick to check for updates";
+  if (st.version) document.title = `PSU Studio ${ver}`;
   const pill = $("#updPill");
   pill.hidden = !st.available;
   if (st.available) {
@@ -958,7 +1153,7 @@ function waitForRestart() {
 }
 function bindUpdates() {
   $("#updPill").addEventListener("click", openUpd);
-  $("#verTag").addEventListener("click", async () => { const st = await checkUpdate(true); if (!st.available) toast(st.error || (st.dev ? "Running from source - no update check" : "You're on the latest build")); });
+  $("#verTag").addEventListener("click", async () => { const st = await checkUpdate(true); if (!st.available) toast(st.error || (st.dev ? "Running from source - no update check" : `You're on the latest version (v${st.version}, build ${st.current})`)); });
   $("#updNotes").addEventListener("click", () => api.open_url(updState?.latest?.url || RELEASES));
   $("#updGo").addEventListener("click", async () => {
     const st = updState;
@@ -983,7 +1178,8 @@ async function boot() {
   makeLive();
   waveChart = makeStepChart($("#waveChart"));
   ro.observe($("#liveChart")); ro.observe($("#waveChart"));
-  bindSetpoints(); bindPresets(); bindTable(); bindRun(); bindMapper(); bindGen(); bindConsole(); bindMisc(); bindUpdates(); bindMeter();
+  makeChargeChart();
+  bindSetpoints(); bindPresets(); bindTable(); bindRun(); bindMapper(); bindGen(); bindConsole(); bindMisc(); bindUpdates(); bindMeter(); bindCharger();
 
   S.settings = (await api.load_settings()) || {};
   if (Array.isArray(S.settings.presets)) S.presets = S.settings.presets.concat(Array(8).fill(null)).slice(0, 8);
@@ -996,6 +1192,7 @@ async function boot() {
       { name: "12 V", v: 12, i: 2, ovp: 13, ocp: 2.2 }, { name: "Car", v: 13.8, i: 5, ovp: 15, ocp: 5.5 }, null, null, null, null];
   }
   renderPresets(); renderTable(); onDisconnected();
+  await initCharger();
   await refreshPorts(); await refreshDriver();
   poll(); autoLoop();
   checkUpdate(); setInterval(() => checkUpdate(true), 6 * 3600 * 1000);

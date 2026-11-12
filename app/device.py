@@ -56,6 +56,44 @@ def list_ports():
     return out
 
 
+class SimBattery:
+    """
+    Very rough battery for the simulator: open-circuit voltage from state of
+    charge, plus internal resistance. Time runs `speed` times faster so a
+    charge finishes in minutes instead of hours.
+    """
+    # per-cell OCV vs state of charge
+    CURVES = {
+        "lead": [(0, 1.80), (0.2, 1.95), (0.5, 2.05), (0.8, 2.15), (0.95, 2.30), (1.0, 2.43)],
+        "gel": [(0, 1.80), (0.2, 1.95), (0.5, 2.05), (0.8, 2.15), (0.95, 2.28), (1.0, 2.38)],
+        "lfp": [(0, 2.60), (0.08, 3.15), (0.5, 3.28), (0.9, 3.35), (0.97, 3.45), (1.0, 3.62)],
+        "liion": [(0, 3.05), (0.1, 3.50), (0.5, 3.72), (0.85, 4.00), (0.95, 4.12), (1.0, 4.21)],
+    }
+    R_CELL = {"lead": 0.012, "gel": 0.015, "lfp": 0.01, "liion": 0.04}
+
+    def __init__(self, chem, cells, cap_ah, soc=0.25, speed=60):
+        self.chem = chem if chem in self.CURVES else "lead"
+        self.cells = max(1, cells)
+        self.cap = max(0.05, cap_ah)
+        self.soc = soc
+        self.speed = speed
+        self.r = self.R_CELL[self.chem] * self.cells * (10 / max(1.0, self.cap)) ** 0.5
+        self._t = time.monotonic()
+
+    def ocv(self):
+        pts = self.CURVES[self.chem]
+        s = min(1.0, max(0.0, self.soc))
+        for (s0, v0), (s1, v1) in zip(pts, pts[1:]):
+            if s <= s1:
+                return self.cells * (v0 + (v1 - v0) * (s - s0) / (s1 - s0))
+        return self.cells * pts[-1][1]
+
+    def advance(self, i):
+        now = time.monotonic()
+        dt, self._t = min(1.0, now - self._t), now
+        self.soc = min(1.0, self.soc + i * dt * self.speed / 3600 / self.cap * 0.95)
+
+
 class SimPSU:
     """Pretend supply so the UI can be used/tested without hardware."""
 
@@ -65,6 +103,18 @@ class SimPSU:
         self.out = False
         self.load_ohms = 4.7
         self.trip = ""
+        self.battery = None
+        self.speed = 60  # simulated battery time runs this much faster
+
+    def attach_battery(self, plan):
+        """Called by the charger: put a part-charged battery on the terminals."""
+        chem, cells = plan["chem"], plan["cells"]
+        if chem == "custom":  # guess a lead-acid bank from the charge voltage
+            chem, cells = "lead", max(1, round(plan["v_charge"] / 2.4))
+        self.battery = SimBattery(chem, cells, plan.get("cap") or 10, speed=self.speed)
+
+    def detach_battery(self):
+        self.battery = None
 
     def query(self, cmd):
         c = cmd.strip().upper()
@@ -94,6 +144,9 @@ class SimPSU:
         return "ERR"
 
     def _measure(self):
+        b = self.battery
+        if b is not None:
+            return self._measure_battery(b)
         if not self.out:
             return 0.0, 0.0, 0
         load = self.load_ohms * (1 + 0.02 * random.random())
@@ -111,6 +164,26 @@ class SimPSU:
             self.out = False
             self.trip = "OVP" if v > self.ovp else "OCP"
         return max(v, 0), max(i, 0), mode
+
+    def _measure_battery(self, b):
+        ocv = b.ocv()
+        if not self.out:
+            b.advance(0)
+            return ocv + random.gauss(0, 0.002), 0.0, 0
+        want = (self.v_set - ocv) / b.r
+        if want <= 0:          # battery above the setpoint: supply can't sink current
+            i, v, mode = 0.0, ocv, 1
+        elif want > self.i_set:
+            i, v, mode = self.i_set, ocv + self.i_set * b.r, 2
+        else:
+            i, v, mode = want, self.v_set, 1
+        b.advance(i)
+        v += random.gauss(0, 0.002)
+        i = max(0.0, i + random.gauss(0, 0.0008))
+        if v > self.ovp or i > self.ocp:
+            self.out = False
+            self.trip = "OVP" if v > self.ovp else "OCP"
+        return max(v, 0), i, mode
 
     def write(self, cmd):
         c = cmd.strip().upper()

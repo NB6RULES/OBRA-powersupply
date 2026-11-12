@@ -50,9 +50,10 @@ jobs:
         shell: pwsh
         run: |
           python -m pip install -r requirements.txt pyinstaller
-          python -m PyInstaller --noconfirm --onefile --windowed --name "PSU-Studio" `
+          python tools\version_file.py ${{ github.run_number }} | Out-File -Encoding utf8 version_info.txt
+          python -m PyInstaller --noconfirm --onefile --windowed --name "PSU-Studio" --icon "app\assets\psu_studio.ico" --version-file version_info.txt `
             --add-data "app\web;web" --add-data "drivers;drivers" --add-data "app\build_info.json;." `
-            --paths app --hidden-import device --hidden-import driver --hidden-import importers --hidden-import updater `
+            --paths app --hidden-import charger --hidden-import device --hidden-import driver --hidden-import importers --hidden-import updater `
             app\psu_studio.py
           Get-Item dist\PSU-Studio.exe
 
@@ -81,7 +82,7 @@ jobs:
           python -m pip install pyserial openpyxl pyinstaller
           python -m PyInstaller --noconfirm --onefile --name "PSU-Studio-linux-x86_64" \
             --add-data "app/web:web" --add-data "app/build_info.json:." \
-            --paths app --hidden-import device --hidden-import driver --hidden-import importers --hidden-import updater \
+            --paths app --hidden-import charger --hidden-import device --hidden-import driver --hidden-import importers --hidden-import updater \
             --exclude-module pandas --exclude-module numpy --exclude-module tkinter --exclude-module webview \
             app/psu_studio.py
           ls -la dist/

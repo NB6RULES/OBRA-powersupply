@@ -19,6 +19,7 @@ from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 HERE = getattr(sys, "_MEIPASS", os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, HERE)
 
+import charger as chg_mod  # noqa: E402
 import device as dev_mod  # noqa: E402
 import driver  # noqa: E402
 import importers  # noqa: E402
@@ -27,13 +28,14 @@ import updater  # noqa: E402
 WEB = os.path.join(HERE, "web")
 DOCS = os.path.join(os.path.expanduser("~"), "Documents", "PSU Studio")
 SETTINGS = os.path.join(DOCS, "settings.json")
-VERSION = "1.0.0"
+VERSION = "1.1.0"
 
 
 class Api:
     def __init__(self, sim=False):
         self._dev = dev_mod.Device()
         self._seq = dev_mod.Sequencer(self._dev)
+        self._chg = chg_mod.Charger(self._dev)
         self._sim = sim
         self._upd = updater.Updater()
         self._window = None
@@ -53,7 +55,10 @@ class Api:
     def auto_connect(self):
         """Pick the first CH340 port, or the simulator in --sim mode."""
         if self._dev.link.is_open:
-            return self.connect(self._dev.link.port)
+            # already connected (e.g. the window was reloaded): keep the link, so a running
+            # charge or waveform isn't interrupted by a reconnect
+            d = self._dev
+            return dict(ok=True, idn=d.idn, port=d.link.port, limits=d.limits)
         if self._sim:
             return self.connect("SIM")
         for p in dev_mod.list_ports():
@@ -74,12 +79,15 @@ class Api:
 
     def disconnect(self):
         self._seq.stop()
+        self._chg.stop("Disconnected")
         self.stop_record()
         self._dev.disconnect()
         return dict(ok=True)
 
     # ---- control --------------------------------------------------------
     def _do(self, fn, *a):
+        if self._chg.running:
+            return dict(ok=False, msg="The battery charger is in control. Stop the charge first.")
         try:
             return dict(ok=True, value=fn(*a))
         except Exception as e:
@@ -98,9 +106,15 @@ class Api:
         return self._do(self._dev.set_ocp, i)
 
     def set_output(self, on):
+        if self._chg.running:
+            self._chg.stop()
+            if on:
+                return dict(ok=False, msg="Charge stopped. Press the output button again to switch it on.")
         return self._do(self._dev.set_output, bool(on))
 
     def apply_preset(self, p):
+        if self._chg.running:
+            return dict(ok=False, msg="The battery charger is in control. Stop the charge first.")
         try:
             self._dev.set_output(False) if p.get("off_first") else None
             self._dev.set_ocp(p["ocp"])
@@ -124,8 +138,29 @@ class Api:
             limits=d.limits, state=d.state, error=d.error,
             seq=new_seq, samples=data, sequencer=self._seq.status,
             recording=dict(on=bool(rec), path=rec.path if rec else "", rows=rec.rows if rec else 0),
-            meter=d.meter.status(), poll_hz=d.poll_hz,
+            meter=d.meter.status(), poll_hz=d.poll_hz, charger=self._chg.status,
         )
+
+    # ---- battery charger --------------------------------------------------
+    def charge_options(self):
+        return chg_mod.options()
+
+    def charge_plan(self, cfg):
+        return chg_mod.make_plan(cfg or {}, self._dev.limits)
+
+    def charge_start(self, cfg):
+        if not self._dev.link.is_open:
+            return dict(ok=False, msg="Connect to the supply first.")
+        self._seq.stop()
+        try:
+            self._chg.start(cfg or {})
+            return dict(ok=True)
+        except Exception as e:
+            return dict(ok=False, msg=str(e))
+
+    def charge_stop(self):
+        self._chg.stop()
+        return dict(ok=True)
 
     # ---- power meter ----------------------------------------------------
     def meter_enable(self, on):
@@ -156,6 +191,8 @@ class Api:
     def seq_start(self, steps, opts):
         if not self._dev.link.is_open:
             return dict(ok=False, msg="Connect to the supply first.")
+        if self._chg.running:
+            return dict(ok=False, msg="A battery charge is running. Stop it first.")
         lim = self._dev.limits
         bad = [k for k, s in enumerate(steps) if s.get("en", True) and (
             float(s["v"]) > lim["vmax"] or float(s["i"]) > lim["imax"] or float(s["v"]) < 0 or float(s["i"]) < 0)]
@@ -274,7 +311,7 @@ class Api:
 
     # ---- updates --------------------------------------------------------
     def check_update(self, force=False):
-        return self._upd.check(force=bool(force))
+        return dict(self._upd.check(force=bool(force)), version=VERSION)
 
     def update_status(self):
         return self._upd.status()
@@ -297,6 +334,7 @@ class Api:
         return self._upd.install(quit_app)
 
     def shutdown(self):
+        self._chg.stop("App closed")
         try:
             if self._dev.state.get("out") and self._seq.status.get("running"):
                 self._dev.set_output(False)
@@ -464,7 +502,7 @@ def main():
         run_browser(api)
         return
     win = webview.create_window(
-        "PSU Studio", os.path.join(WEB, "index.html"), js_api=api,
+        f"PSU Studio {VERSION}", os.path.join(WEB, "index.html"), js_api=api,
         width=1360, height=880, min_size=(1000, 680), background_color="#0d0f12")
     api._window = win
     win.events.closing += lambda: api.shutdown()

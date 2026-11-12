@@ -1,4 +1,4 @@
-# PSU Studio
+# <img src="app/assets/icon-256.png" width="40" align="top"> PSU Studio
 
 [![Download for Windows](https://img.shields.io/badge/Windows-PSU--Studio.exe-ffb020?style=for-the-badge&logo=windows&logoColor=black)](https://github.com/NB6RULES/OBRA-powersupply/releases/latest/download/PSU-Studio.exe)
 [![Download for Linux](https://img.shields.io/badge/Linux-x86__64-ffb020?style=for-the-badge&logo=linux&logoColor=black)](https://github.com/NB6RULES/OBRA-powersupply/releases/latest/download/PSU-Studio-linux-x86_64)
@@ -41,6 +41,12 @@ A cleaner control app for the **Multicomp Pro MP711127 / MP711128 / MP711129 / M
     - Optional **resample** to an even step size, for dense LUTs.
   - **Generator** for sine, triangle, square, ramp, sawtooth and staircase waveforms.
   - Run options: loops (0 = forever), from/to step, and auto output on/off.
+- **Battery charger** tab: turns the supply into a proper staged charger.
+  - Pick the type (lead-acid flooded/AGM, gel, LiFePO4, Li-ion, or Custom), the voltage written on the battery (6 / 12 / 24 V, 12.8 V lithium, 3.7 V cells…), the Ah from the label, and Normal or Fast. The app works out the charge current and voltages.
+  - Stages: gentle wake-up for a very flat battery, bulk (constant current), top-up (constant voltage while the current tapers), then **hold at float** for lead-acid (safe to leave connected) or **switch off** for lithium.
+  - Typical 12 V lead-acid: charges to 14.4 V, then holds 13.65 V. Custom mode lets you type your own voltages, e.g. a plain 13.8 V maintainer.
+  - Safety stops (output off): battery reads the wrong voltage for what you picked, no current flowing (no battery / loose clip), voltage above target, the supply tripping, lost comms, and a time limit.
+  - Live chart of the charge, Ah put in, elapsed time and an event log. Esc still stops everything.
 - **SCPI console** with command history.
 - **Built-in driver install**:
   - The top bar shows the CH340 driver status.
@@ -78,9 +84,22 @@ Every push to `main` builds the Windows exe and the Linux binary on GitHub Actio
 
 If `drivers\` is empty, the Install driver button opens WCH's official download page instead.
 
+## Charging batteries: read this
+
+![Battery charger tab](docs/charger.png)
+
+- **Polarity:** red clip to +, black to −. The supply can't protect against reversed leads.
+- **Stay nearby.** The app can't sense battery temperature. Stop if the battery gets hot, swells or smells.
+- **Lithium packs** with more than one cell need their own BMS / balance board. The app only sees the total pack voltage.
+- **Back-feeding:** when the output is off, a connected battery can push current back into the supply. If you leave batteries connected for a long time, a blocking diode or ideal-diode module in the + lead protects the supply (the diode drop slightly lowers the charge voltage).
+- The charge figures are typical values. If the battery's datasheet says something different, use **Custom** with its numbers.
+- The simulator includes a pretend battery whose time runs 60× faster, so you can watch a full charge in a minute or two.
+
 ## Notes
 
 - Waveforms are timed by the PC, not by the supply. The SPE series has no list mode over SCPI. Steps under 50 ms get stretched to 50 ms. For dense lookup tables, use "Resample to 0.1 s".
 - Close the Multicomp software first. Only one program can hold the COM port at a time.
+- The version and build number are shown next to the app name in the top bar (click it to check for updates) and in the .exe's Properties → Details.
+- The app icon lives in `app/assets/`. To change it, edit `tools/make_icon.py` and run `python tools/make_icon.py app/assets`, then copy `favicon.png` into `app/web/`.
 - Settings and the last waveform are saved to `Documents\PSU Studio\settings.json`.
 - If the desktop window won't open (very old Windows without WebView2), run `run.bat --browser`. It opens the same UI in your browser.

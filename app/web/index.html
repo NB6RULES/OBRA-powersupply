@@ -4,12 +4,13 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>PSU Studio</title>
+<link rel="icon" type="image/png" href="favicon.png">
 <link rel="stylesheet" href="vendor/uPlot.min.css">
 <link rel="stylesheet" href="app.css">
 </head>
 <body>
 <header class="top">
-  <div class="brand"><span class="logo">⏻</span><b>PSU Studio</b><span class="ver" id="verTag"></span><span class="model" id="modelTag">MP711128 · 30 V / 10 A</span></div>
+  <div class="brand"><img class="logo" src="favicon.png" alt=""><b>PSU Studio</b><span class="ver" id="verTag"></span><span class="model" id="modelTag">MP711128 · 30 V / 10 A</span></div>
   <div class="conn">
     <span class="chip" id="driverChip" title="USB driver status">Checking driver…</span>
     <button class="btn ghost small" id="driverBtn" hidden>Install driver</button>
@@ -90,8 +91,10 @@
     <nav class="tabs">
       <button class="tab on" data-tab="live">Live</button>
       <button class="tab" data-tab="wave">Waveform</button>
+      <button class="tab" data-tab="charge">Battery charger</button>
       <button class="tab" data-tab="console">SCPI console</button>
       <div class="tab-spacer"></div>
+      <div class="seq-mini chg" id="chgMini" hidden><span class="pulse"></span><span id="chgMiniTxt">Charging</span><button class="btn danger small" id="chgMiniStop">Stop</button></div>
       <div class="seq-mini" id="seqMini" hidden><span class="pulse"></span><span id="seqMiniTxt">Running</span><button class="btn danger small" id="seqMiniStop">Stop</button></div>
     </nav>
 
@@ -158,6 +161,67 @@
             </div>
           </div>
         </div>
+      </div>
+    </div>
+
+    <!-- BATTERY CHARGER -->
+    <div class="pane" id="pane-charge">
+      <div class="chg-body">
+        <fieldset class="chg-setup" id="chgForm">
+          <div class="chg-step"><span class="n">1</span><b>Battery type</b></div>
+          <div class="chem-grid" id="chgChem"></div>
+
+          <div class="chg-step"><span class="n">2</span><b>Battery voltage</b><span class="hint" id="chgSizeHint">as written on the battery</span></div>
+          <div class="size-grid" id="chgSize"></div>
+          <div class="custom-grid" id="chgCustom" hidden>
+            <label>Charge to <span class="ninp"><input type="number" id="cuV" step="0.01" min="0"><em>V</em></span></label>
+            <label>Then hold at <span class="ninp"><input type="number" id="cuHold" step="0.01" min="0"><em>V</em></span><span class="hint">0 = switch off when full</span></label>
+            <label>Current <span class="ninp"><input type="number" id="cuI" step="0.01" min="0"><em>A</em></span></label>
+            <label>Full when current falls below <span class="ninp"><input type="number" id="cuTerm" step="0.01" min="0" placeholder="auto"><em>A</em></span></label>
+          </div>
+
+          <div class="chg-step"><span class="n">3</span><b>Capacity</b><span class="hint">the Ah number on the label</span></div>
+          <div class="cap-row">
+            <span class="ninp big"><input type="number" id="chgCap" step="0.1" min="0" placeholder="e.g. 7"><em>Ah</em></span>
+            <span class="hint" id="chgCapHint">2000 mAh = 2 Ah</span>
+          </div>
+
+          <div class="chg-step" id="chgSpeedH"><span class="n">4</span><b>Speed</b></div>
+          <div class="speed-seg" id="chgSpeed">
+            <button data-m="normal"><b>Normal</b><span id="chgNormalI">gentlest on the battery</span></button>
+            <button data-m="fast"><b>Fast</b><span id="chgFastI">quicker, a little more wear</span></button>
+          </div>
+          <label class="tick" id="chgHoldRow"><input type="checkbox" id="chgHold" checked> <span id="chgHoldTxt">Hold when full</span></label>
+          <details class="chg-adv" id="chgAdv">
+            <summary>Advanced</summary>
+            <label>Charge current <span class="ninp"><input type="number" id="chgIOv" step="0.01" min="0" placeholder="auto"><em>A</em></span><span class="hint">leave blank to use the speed above</span></label>
+          </details>
+
+          <div class="chg-plan" id="chgPlan"></div>
+          <button type="button" class="btn primary chg-go" id="chgStart" disabled>Start charging</button>
+          <ul class="chg-safety">
+            <li>Red clip to <b>+</b>, black to <b>−</b>. The supply can't protect against reversed leads.</li>
+            <li>Stay nearby. The app can't feel the battery getting hot. Stop if it does, or if it swells or smells.</li>
+            <li>Lithium packs with more than one cell need their own BMS / balance board.</li>
+          </ul>
+        </fieldset>
+
+        <section class="chg-run">
+          <div class="stepper" id="chgSteps"></div>
+          <div class="chg-msg" id="chgMsg">Pick a battery on the left, then press Start.</div>
+          <div class="chg-stats">
+            <div><span>Voltage</span><b class="cv" id="chgV">—</b></div>
+            <div><span>Current</span><b class="ci" id="chgI">—</b></div>
+            <div><span>Put in</span><b id="chgAh">—</b></div>
+            <div><span>Time</span><b id="chgT">—</b></div>
+          </div>
+          <div class="progress" id="chgProgWrap" hidden><div id="chgProg"></div></div>
+          <div class="chart chg-chart" id="chgChart"></div>
+          <div class="chg-foot">
+            <ol class="chg-log" id="chgLog"></ol>
+            <button type="button" class="btn danger" id="chgStop" disabled>■ Stop charging</button>
+          </div>
+        </section>
       </div>
     </div>
 

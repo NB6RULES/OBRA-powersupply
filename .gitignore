@@ -6,3 +6,4 @@ dist/
 drivers/*.exe
 drivers/*.EXE
 app/build_info.json
+version_info.txt

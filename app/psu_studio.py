@@ -30,7 +30,7 @@ WEB = os.path.join(HERE, "web")
 DOCS = os.path.join(os.path.expanduser("~"), "Documents", "PSU Studio")
 SETTINGS = os.path.join(DOCS, "settings.json")
 LOGS = os.path.join(DOCS, "logs")
-VERSION = "1.2.1"
+VERSION = "1.2.2"
 
 
 class Api:
@@ -139,6 +139,7 @@ class Api:
         rec = d.recorder
         return dict(
             connected=d.link.is_open, port=d.link.port, idn=d.idn, t0=d.t0,
+            reconnecting=d.reconnecting, reconnects=d.reconnects,
             limits=d.limits, state=d.state, error=d.error,
             seq=new_seq, samples=data, sequencer=self._seq.status,
             recording=dict(on=bool(rec), path=rec.path if rec else "", rows=rec.rows if rec else 0),

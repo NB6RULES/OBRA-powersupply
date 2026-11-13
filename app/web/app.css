@@ -407,3 +407,54 @@ textarea:focus { border-color: var(--accent); }
   .logs-body { grid-template-columns: 260px 1fr; }
   .lv-stats { grid-template-columns: repeat(2, 1fr); }
 }
+
+/* ---------- instrument panel: never wider than its column, and fit without scrolling ---------- */
+.instrument { overflow-x: hidden; }
+.setpoints { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.sp, .spin { min-width: 0; }
+.spin input { width: 100%; }
+.stepsize { flex-wrap: wrap; row-gap: 4px; }
+.stepsize .hint { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+/* power on one line: label left, value right */
+.ro.p { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding-top: 6px; padding-bottom: 6px; }
+.ro.p .ro-val span { font-size: clamp(22px, 3.4vh, 30px); line-height: 1.1; }
+/* big digits scale with the window height */
+.ro-val span { font-size: clamp(32px, 5.6vh, 52px); }
+.pm-big span { font-size: clamp(22px, 3.4vh, 32px); }
+.pm-big.small span { font-size: clamp(18px, 2.7vh, 24px); }
+.pm-foot { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+@media (max-height: 900px) {
+  .instrument { gap: 9px; padding: 11px 12px; }
+  .ro { padding: 5px 12px 4px; }
+  .readouts { gap: 6px; }
+  .setpoints { gap: 7px 10px; }
+  .sp label { margin-bottom: 2px; }
+  .spin input { padding: 5px 2px; font-size: 15px; }
+  .output { padding: 8px 14px; font-size: 14px; }
+  .meter-h { padding: 5px 10px; }
+  .meter-body { gap: 6px 12px; padding: 7px 12px; }
+  .pm-grid { gap: 2px 14px; font-size: 11px; }
+  .pm-grid div { padding-top: 2px; }
+  .sec-h { margin-bottom: 4px; }
+  .preset { padding: 4px 7px; }
+}
+.preset b { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+@media (max-height: 900px) {
+  /* label beside the digits instead of above them; mode badge tucks under the label */
+  .ro.v, .ro.i { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 4px 12px 4px; }
+  .ro.v .ro-val span, .ro.i .ro-val span { line-height: 1; }
+  .ro.v .ro-label, .ro.i .ro-label { align-self: flex-start; margin-top: 6px; }
+  .badges { top: 28px; right: auto; left: 12px; }
+  .preset { line-height: 1.25; font-size: 10.5px; }
+}
+@media (max-height: 760px) {
+  .instrument { gap: 7px; }
+  .ro-label { font-size: 9.5px; }
+  .pm-sub { display: none; }
+  .pm-foot { display: none; }
+  .stepsize .hint { display: none; }
+  .meter-body { padding: 5px 12px; }
+  .readouts { gap: 4px; }
+  .setpoints { gap: 5px 10px; }
+  .instrument { padding: 9px 12px; }
+}

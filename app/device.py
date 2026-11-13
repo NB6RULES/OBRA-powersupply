@@ -216,10 +216,40 @@ class Link:
         self.sim = None
         self.port = None
         self.log = deque(maxlen=400)  # SCPI console history
+        self.empty_streak = 0      # replies in a row that came back empty
+        self.recovering = False    # connection lost, Device is trying to get it back
 
     @property
     def is_open(self):
-        return self.ser is not None or self.sim is not None
+        return self.ser is not None or self.sim is not None or self.recovering
+
+    def reopen(self, port):
+        """Drop the (probably dead) handle and open the port again, keeping our place."""
+        with self.lock:
+            try:
+                if self.ser:
+                    self.ser.close()
+            except Exception:
+                pass
+            self.ser = None
+            if port == "SIM":
+                self.sim = self.sim or SimPSU()
+            else:
+                self.ser = serial.Serial(port, 115200, bytesize=8, parity="N", stopbits=1,
+                                         timeout=0.5, write_timeout=0.5)
+                time.sleep(0.15)
+                self.ser.reset_input_buffer()
+            self.port = port
+            self.empty_streak = 0
+
+    def drop_handle(self):
+        with self.lock:
+            try:
+                if self.ser:
+                    self.ser.close()
+            except Exception:
+                pass
+            self.ser = None
 
     def open(self, port, baud=115200):
         self.close()
@@ -244,6 +274,7 @@ class Link:
             self.ser = None
             self.sim = None
             self.port = None
+            self.recovering = False
 
     def _note(self, direction, text):
         self.log.append((time.time(), direction, text))
@@ -275,6 +306,7 @@ class Link:
                 self.ser.write((cmd + "\n").encode("ascii"))
                 self.ser.flush()
                 r = self.ser.readline().decode("ascii", "replace").strip()
+                self.empty_streak = 0 if r else self.empty_streak + 1
             if log:
                 self._note("<", r if r else "(no reply)")
             return r
@@ -369,6 +401,9 @@ class Device:
         self.recorder = None
         self.paused = False
         self.meter = PowerMeter()
+        self.reconnecting = False
+        self.reconnects = 0          # how many times the link was recovered (UI shows a toast)
+        self.off_on_reconnect = False  # switch the output off when the link comes back (charger asks)
 
     # -- connection -------------------------------------------------
     def connect(self, port):
@@ -469,12 +504,72 @@ class Device:
             i = _f(L.query("MEAS:CURR?", log=False))
         return v, i, v * i, mode
 
+    # -- recovering a lost link (laptop sleep, USB reset, cable wiggle) --------------
+    def _recover(self, why):
+        """Keep reopening the port until the supply answers again. Runs on the poll thread."""
+        port, idn = self.link.port, self.idn
+        self.reconnecting = True
+        self.link.recovering = True
+        self.error = "Lost contact with the supply. Reconnecting…"
+        self.link._note("!", f"lost contact ({why}), reconnecting")
+        attempt = 0
+        while not self._stop.is_set():
+            attempt += 1
+            self.link.drop_handle()
+            # same port first; from the 4th try also look at the other ports (it may come back
+            # under a different COM number), only accepting one that gives the same *IDN?
+            candidates = [port]
+            if attempt > 3 and port != "SIM":
+                try:
+                    candidates += [p["device"] for p in list_ports() if p["device"] != port]
+                except Exception:
+                    pass
+            for cand in candidates:
+                if self._stop.is_set():
+                    return
+                try:
+                    self.link.reopen(cand)
+                    got = self.link.query("*IDN?")
+                    if got and (cand == port or got == idn):
+                        self._back(cand, got)
+                        return
+                except Exception:
+                    pass
+                self.link.drop_handle()
+            self.error = f"Lost contact with the supply. Reconnecting… (try {attempt})"
+            self._stop.wait(2.0)
+
+    def _back(self, port, idn):
+        self.idn = idn
+        try:
+            self.link.write("SYST:REM")
+        except Exception:
+            pass
+        if self.off_on_reconnect:
+            try:
+                self.link.write("OUTP OFF")
+            except Exception:
+                pass
+            self.off_on_reconnect = False
+        try:
+            self.read_setpoints()
+        except Exception:
+            pass
+        self.link.recovering = False
+        self.reconnecting = False
+        self.reconnects += 1
+        self.error = ""
+        self.link._note("!", f"reconnected on {port}")
+
     def _poll_loop(self):
         tick = 0
+        fails = 0
         while not self._stop.is_set():
             start = time.time()
             if not self.paused:
                 try:
+                    if self.link.empty_streak >= 6:
+                        raise IOError("the supply stopped replying")
                     v, i, p, mode = self._measure()
                     tick += 1
                     if tick % 8 == 0:  # occasionally re-read output state
@@ -497,9 +592,16 @@ class Device:
                     if rec:
                         rec.write(row)
                     self.error = ""
-                except Exception as e:  # cable pulled etc.
+                    fails = 0
+                except Exception as e:  # cable pulled, laptop slept, USB reset
+                    fails += 1
                     self.error = f"Comms error: {e}"
-                    time.sleep(0.5)
+                    if fails >= 3 and not self._stop.is_set():
+                        self._recover(str(e))
+                        fails = 0
+                        tick = 0
+                    else:
+                        self._stop.wait(0.5)
             dt = 1.0 / max(1, self.poll_hz) - (time.time() - start)
             if dt > 0:
                 self._stop.wait(dt)

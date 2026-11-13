@@ -213,7 +213,13 @@ async function poll() {
     renderMeter(r);
     if (r.charger) renderCharger(r.charger);
     $("#statusTxt").textContent = r.error || (r.connected ? `${r.port} · ${shortIdn(r.idn)}` : "Not connected");
-    $("#statusTxt").style.color = r.error ? "var(--bad)" : "";
+    $("#statusTxt").style.color = r.reconnecting ? "var(--v)" : r.error ? "var(--bad)" : "";
+    if (r.reconnects != null) {
+      if (S.reconnects != null && r.reconnects > S.reconnects) {
+        toast("Reconnected to the supply", "", 4000);
+      }
+      S.reconnects = r.reconnects;
+    }
   } catch (e) { /* bridge not ready yet */ }
   setTimeout(poll, 100);
 }
@@ -906,8 +912,9 @@ function renderMeter(r) {
   const hz = r.poll_hz || 8, foot = $("#pmFoot");
   foot.className = "pm-foot " + (m.enabled && hz < 10 ? "warn" : "");
   foot.textContent = m.enabled
-    ? `Sampling ${hz}×/s · spikes shorter than ~${Math.round(1000 / hz)} ms can be missed${hz < 15 ? " (raise Poll on the Live tab for inrush)" : ""}`
+    ? `${hz} readings/s · spikes under ${Math.round(1000 / hz)} ms can be missed${hz < 15 ? " · raise Poll (Live tab) for inrush" : ""}`
     : "Counts only while the output is on. Keeps running when the chart is paused.";
+  foot.title = foot.textContent;
   // celebrate a new peak (skip the very first sample so it doesn't flash on start)
   if (m.enabled && m.peak_count > lastPeakCount && lastPeakCount > 0 && m.peak_count > 1) {
     box.classList.add("flash"); clearTimeout(flashT); flashT = setTimeout(() => box.classList.remove("flash"), 1400);

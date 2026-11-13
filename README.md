@@ -105,6 +105,7 @@ If `drivers\` is empty, the Install driver button opens WCH's official download 
 - Waveforms are timed by the PC, not by the supply. The SPE series has no list mode over SCPI. Steps under 50 ms get stretched to 50 ms. For dense lookup tables, use "Resample to 0.1 s".
 - Close the Multicomp software first. Only one program can hold the COM port at a time.
 - Logs live in `Documents\\PSU Studio\\logs`. Friendly names and charge results are kept in `index.json` in that folder.
+- **Sleep / USB hiccups:** if the laptop sleeps or the USB link drops, the top bar shows "Reconnecting…" in amber and the app reopens the port by itself when the supply is back (it also checks other COM ports for the same supply). A battery charge that loses contact for over 15 s is stopped, and the output is switched off as soon as the link returns.
 - The version and build number are shown next to the app name in the top bar (click it to check for updates) and in the .exe's Properties → Details.
 - The app icon lives in `app/assets/`. To change it, edit `tools/make_icon.py` and run `python tools/make_icon.py app/assets`, then copy `favicon.png` into `app/web/`.
 - Settings and the last waveform are saved to `Documents\PSU Studio\settings.json`.

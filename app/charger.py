@@ -347,8 +347,10 @@ class Charger:
                 # comms
                 if dev.error:
                     err_since = err_since or now
-                    if now - err_since > 5:
-                        end_kind, end_msg = "fault", "Lost contact with the supply. Output switched off."
+                    if now - err_since > 15:
+                        dev.off_on_reconnect = True   # make sure it stops charging once it's back
+                        end_kind, end_msg = "fault", ("Lost contact with the supply for over 15 s (sleep or USB). "
+                                                      "Charge stopped: the output is switched off as soon as it reconnects.")
                         break
                     continue
                 err_since = None

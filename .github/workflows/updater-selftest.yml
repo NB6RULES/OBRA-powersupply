@@ -1,0 +1,27 @@
+name: updater-selftest
+on:
+  push:
+    branches: [updater-selftest]
+jobs:
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: python -m pip install pyinstaller
+      - run: python -m PyInstaller --noconfirm --onefile --windowed --name ST --paths app tools/updater_selftest.py
+      - shell: pwsh
+        run: |
+          New-Item -ItemType Directory t | Out-Null
+          Copy-Item dist\ST.exe t\ST.exe
+          Copy-Item dist\ST.exe t\payload.exe
+          Start-Process -FilePath "$pwd\t\ST.exe" -ArgumentList "--payload", "$pwd\t\payload.exe"
+          Start-Sleep -Seconds 40
+          Get-Content t\log.txt
+          Get-ChildItem t | Format-Table Name, Length
+          if (-not (Select-String -Path t\log.txt -Pattern "second run ok" -Quiet)) { Write-Error "new copy never started"; exit 1 }
+          if (Test-Path t\ST.exe.old) { Write-Error ".old left behind"; exit 1 }
+          if (Test-Path t\ST.exe.new) { Write-Error ".new left behind"; exit 1 }
+          Write-Output "UPDATER SELF-TEST PASSED"

@@ -408,7 +408,8 @@ class Api:
 
     # ---- updates --------------------------------------------------------
     def check_update(self, force=False):
-        return dict(self._upd.check(force=bool(force)), version=VERSION)
+        return dict(self._upd.check(force=bool(force)), version=VERSION,
+                    just_updated="--after-update" in sys.argv)
 
     def update_status(self):
         return self._upd.status()
@@ -585,8 +586,18 @@ def run_browser(api, port=8765):
         api.shutdown()
 
 
+def _arg(name):
+    try:
+        return sys.argv[sys.argv.index(name) + 1]
+    except (ValueError, IndexError):
+        return None
+
+
 def main():
     sim = "--sim" in sys.argv
+    if "--wait-pid" in sys.argv:
+        updater.wait_for_pid(_arg("--wait-pid"))
+    updater.cleanup_leftovers()
     api = Api(sim=sim)
     # Linux/macOS builds don't bundle a GUI toolkit: serve the UI to a browser window instead
     if "--browser" in sys.argv or (sys.platform != "win32" and "--webview" not in sys.argv):
@@ -604,6 +615,13 @@ def main():
     api._window = win
     win.events.closing += lambda: api.shutdown()
     webview.start(debug="--debug" in sys.argv)
+    # window gone: make sure the process really ends (a background thread must not keep
+    # it alive, or the next start / update would find it still running)
+    try:
+        api.shutdown()
+    except Exception:
+        pass
+    os._exit(0)
 
 
 if __name__ == "__main__":

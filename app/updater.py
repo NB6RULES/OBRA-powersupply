@@ -6,15 +6,22 @@ file before packaging, and tags each release "build-<run number>". The app
 compares its own build number with the latest release tag.
 
 On the packaged Windows exe, install() downloads the new exe next to the
-current one and hands off to a tiny batch script that waits for this
-process to exit, swaps the files and relaunches.
+current one, then swaps them while this copy is still running: Windows won't
+let a running exe be overwritten or deleted, but it does let it be renamed.
+So the running exe becomes "PSU-Studio.exe.old", the download takes its
+name, the new copy is started (it waits for this one to close) and this one
+quits. The next start deletes the .old file.
+
+(The first version used a batch file that waited for the app to exit and then
+replaced the exe. PyInstaller's one-file launcher keeps the exe locked for a
+moment after the app itself exits, so the replace failed and the update was
+left behind as PSU-Studio.exe.new.)
 """
 import json
 import os
 import re
 import subprocess
 import sys
-import tempfile
 import threading
 import time
 import urllib.request
@@ -38,6 +45,53 @@ def build_info():
 
 def is_frozen_exe():
     return bool(getattr(sys, "frozen", False)) and (os.name == "nt" or sys.platform.startswith("linux"))
+
+
+def clean_env():
+    """Environment for starting a fresh copy of the app from inside the running one.
+    Without this, PyInstaller passes its own variables on and the new copy tries to
+    use this copy's unpacked files, which disappear when this copy closes."""
+    env = {k: v for k, v in os.environ.items()
+           if not (k.startswith("_PYI_") or k.startswith("_MEIPASS") or k == "_PYIBoot_SPLASH")}
+    env["PYINSTALLER_RESET_ENVIRONMENT"] = "1"
+    return env
+
+
+def cleanup_leftovers():
+    """Delete PSU-Studio.exe.old / .new left by an update. Runs in the background at
+    start-up and retries for a while: the old copy may still be closing."""
+    if not is_frozen_exe():
+        return
+
+    def run():
+        exe = sys.executable
+        for _ in range(60):
+            left = [p for p in (exe + ".old", exe + ".new") if os.path.exists(p)]
+            if not left:
+                return
+            for p in left:
+                try:
+                    os.remove(p)
+                except OSError:
+                    pass
+            time.sleep(1)
+    threading.Thread(target=run, daemon=True).start()
+
+
+def wait_for_pid(pid, timeout=20.0):
+    """Windows: wait until the previous copy (the one that installed the update) has closed,
+    so it has let go of the serial port before this one connects."""
+    if os.name != "nt" or not pid:
+        return
+    try:
+        import ctypes
+        k32 = ctypes.windll.kernel32
+        h = k32.OpenProcess(0x00100000, False, int(pid))  # SYNCHRONIZE
+        if h:
+            k32.WaitForSingleObject(h, int(timeout * 1000))
+            k32.CloseHandle(h)
+    except Exception:
+        pass
 
 
 def _get(url, timeout=8):
@@ -114,21 +168,27 @@ class Updater:
                 # (it waits for the port) and let this one quit.
                 os.chmod(new, 0o755)
                 os.replace(new, exe)
-                subprocess.Popen([exe, "--no-open", "--after-update"], start_new_session=True,
+                subprocess.Popen([exe, "--no-open", "--after-update"], start_new_session=True, env=clean_env(),
                                  stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
                 self.progress = 1.0
                 on_ready_to_quit()
                 return
-            bat = os.path.join(tempfile.gettempdir(), "psu_studio_update.bat")
-            with open(bat, "w", encoding="ascii", errors="replace") as f:
-                f.write(f"""@echo off
-:wait
-tasklist /FI "PID eq {os.getpid()}" | find "{os.getpid()}" >nul && (timeout /t 1 /nobreak >nul & goto wait)
-move /y "{new}" "{exe}" >nul || (echo Update failed: could not replace the exe & pause & exit /b 1)
-start "" "{exe}"
-del "%~f0"
-""")
-            subprocess.Popen(["cmd", "/c", bat], creationflags=0x08000000)  # CREATE_NO_WINDOW
+            old = exe + ".old"
+            try:
+                if os.path.exists(old):
+                    os.remove(old)
+            except OSError:
+                old = exe + f".{int(time.time())}.old"
+            os.replace(exe, old)            # allowed even though it's running
+            try:
+                os.replace(new, exe)
+            except OSError:
+                os.replace(old, exe)        # put things back as they were
+                raise
+            flags = 0x00000008 | 0x00000200  # DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP
+            subprocess.Popen([exe, "--after-update", "--wait-pid", str(os.getpid())],
+                             env=clean_env(), creationflags=flags, close_fds=True,
+                             cwd=os.path.dirname(exe))
             self.progress = 1.0
             on_ready_to_quit()
         except PermissionError:

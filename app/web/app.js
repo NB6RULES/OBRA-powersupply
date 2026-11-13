@@ -1305,6 +1305,7 @@ const RELEASES = "https://github.com/NB6RULES/OBRA-powersupply/releases/latest";
 let updState = null;
 async function checkUpdate(force = false) {
   const st = await api.check_update(force);
+  if (st.just_updated && !checkUpdate.greeted) { checkUpdate.greeted = true; toast(`Updated to v${st.version} (build ${st.current})`, "", 6000); }
   updState = st;
   const ver = st.version ? "v" + st.version : "";
   $("#verTag").textContent = [ver, st.dev ? "dev" : `build ${st.current}`].filter(Boolean).join(" · ");
@@ -1323,7 +1324,7 @@ function openUpd() {
   const when = st.latest.published ? new Date(st.latest.published).toLocaleString() : "";
   $("#updTitle").textContent = `Update to build ${st.latest.build}`;
   $("#updBody").innerHTML = `You're on <b>build ${st.current}</b>. Build <b>${st.latest.build}</b> was released ${esc(when)}.<br>` +
-    (st.can_install ? "PSU Studio will download it, close, swap the file and reopen by itself. The output is switched off first."
+    (st.can_install ? "PSU Studio will download it, close and reopen as the new version by itself (takes a few seconds). The output is switched off first."
                     : "Download the new <b>PSU-Studio.exe</b> and replace your old one.");
   $("#updGo").textContent = st.can_install ? "Update & restart" : "Download";
   $("#updMsg").textContent = ""; $("#updProg").hidden = true;
